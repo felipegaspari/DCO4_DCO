@@ -215,18 +215,18 @@ void voice_task() {
 
           switch (oscSync) {
             case 1:
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(10 + offset[pioNumber]));  // OSC Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(10 + offset[pioNumber]));
+              pio_sm_exec(pioN, sm1N, pio_encode_jmp(9 + offset[pioNumber]));  // OSC Sync MODE
+              pio_sm_exec(pioN, sm2N, pio_encode_jmp(9 + offset[pioNumber]));
               break;
 
             case 2:
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(4 + offset[pioNumber]));  // OSC Half Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(12 + offset[pioNumber]));
+              pio_sm_exec(pioN, sm1N, pio_encode_jmp(3 + offset[pioNumber]));  // OSC Half Sync MODE
+              pio_sm_exec(pioN, sm2N, pio_encode_jmp(11 + offset[pioNumber]));
               break;
 
             case 3:
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(4 + offset[pioNumber]));  // OSC 3rd-quarter Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(10 + offset[pioNumber]));
+              pio_sm_exec(pioN, sm1N, pio_encode_jmp(3 + offset[pioNumber]));  // OSC 3rd-quarter Sync MODE
+              pio_sm_exec(pioN, sm2N, pio_encode_jmp(9 + offset[pioNumber]));
               break;
 
             default:
