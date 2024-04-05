@@ -213,20 +213,20 @@ void voice_task() {
               // pwm_set_chan_level(RANGE_PWM_SLICES[(i * 2) + 1], pwm_gpio_to_channel(RANGE_PINS[(i * 2) + 1]), 1);
               // delayMicroseconds(6);
               // Serial.println("VOICE TASK 5c");
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(10 + offset[pioNumber]));  // OSC Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(10 + offset[pioNumber]));
+              pio_sm_exec(pioN, sm1N, pio_encode_jmp(9 + offset[pioNumber]));  // OSC Sync MODE
+              pio_sm_exec(pioN, sm2N, pio_encode_jmp(9 + offset[pioNumber]));
               // Serial.println("VOICE TASK 5d");
               //delayMicroseconds(periodA);
               break;
             case 2:
               // Serial.println("VOICE TASK 5e");
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(4 + offset[pioNumber]));  // OSC Half Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(12 + offset[pioNumber]));
+              pio_sm_exec(pioN, sm1N, pio_encode_jmp(3 + offset[pioNumber]));  // OSC Half Sync MODE
+              pio_sm_exec(pioN, sm2N, pio_encode_jmp(11 + offset[pioNumber]));
               break;
             case 3:
               // Serial.println("VOICE TASK 5f");
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(4 + offset[pioNumber]));  // OSC 3rd-quarter Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(10 + offset[pioNumber]));
+              pio_sm_exec(pioN, sm1N, pio_encode_jmp(3 + offset[pioNumber]));  // OSC 3rd-quarter Sync MODE
+              pio_sm_exec(pioN, sm2N, pio_encode_jmp(9 + offset[pioNumber]));
               break;
             default:
               break;
