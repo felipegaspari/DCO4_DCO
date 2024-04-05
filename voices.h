@@ -4,10 +4,18 @@
 
 void init_voices();
 
-float freqPortaInterval[NUM_VOICES_TOTAL * 2];
-uint_fast32_t portamentoTimer[NUM_VOICES_TOTAL * 2];
-uint_fast32_t portamentoStartMillis[NUM_VOICES_TOTAL * 2];
-bool note_on_flag_flag[NUM_VOICES_TOTAL * 2];
+bool note_on_flag_flag[NUM_VOICES_TOTAL];
+
+uint32_t portamentoTimer[NUM_VOICES_TOTAL];
+uint32_t portamentoStartMillis[NUM_VOICES_TOTAL];
+uint32_t portamentoStartMicros[NUM_VOICES_TOTAL];
+
+bool portamento = true;
+uint32_t portamento_time = 0;
+float  freqPortaInterval[NUM_VOICES_TOTAL * 2];
+float portamento_stop[NUM_VOICES_TOTAL * 2];
+float portamento_start[NUM_VOICES_TOTAL * 2];
+float portamento_cur_freq[NUM_VOICES_TOTAL * 2];
 
 uint8_t highestNote = 124;
 

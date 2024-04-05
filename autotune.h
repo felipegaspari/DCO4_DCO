@@ -3,11 +3,12 @@
 
 bool autotuneOnFlag;
 bool manualTuneOnFlag;
+bool firstTuneFlag;
 
 /************************************************/
 /****************** DCO calibration ******************/
 
-const int DCO_calibration_pin = 4;
+
 
 uint32_t calibrationData[chanLevelVoiceDataSize];
 
@@ -21,6 +22,8 @@ unsigned long DCOCalibrationStart;
 bool DCO_calibration_lastVal = 0;
 
 volatile uint16_t ampCompCalibrationVal;
+volatile uint16_t initManualAmpCompCalibrationVal = 60;
+
 
 int pulseCounter = 0;
 float DCO_calibration_avg1, DCO_calibration_avg2;
@@ -31,6 +34,8 @@ uint8_t DCO_calibration_avg1_counter, DCO_calibration_avg2_counter;
 uint16_t samplesNumber;
 
 const uint8_t DCO_calibration_start_note = 29;
+const uint8_t manual_DCO_calibration_start_note = DCO_calibration_start_note - 5;
+
 uint8_t DCO_calibration_current_note;
 uint8_t DCO_calibration_current_voice;
 uint8_t DCO_calibration_current_OSC;
@@ -42,7 +47,10 @@ uint8_t lastGapFlipCount;
 uint16_t lastPIDgap;
 uint16_t lastampCompCalibrationVal;
 
+uint16_t PWCalibrationVal;
+
 byte autotuneDebug = 4;
+
 
 
 /*********************** VCO calibration  ********************/

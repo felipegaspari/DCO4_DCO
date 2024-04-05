@@ -11,7 +11,7 @@ void init_DCO_calibration() {
   arrayPos += 2;
 
   calibrationData[arrayPos] = (uint32_t)(sNotePitches[DCO_calibration_current_note - 17] * 100);
-  calibrationData[arrayPos + 1] = 60;
+  calibrationData[arrayPos + 1] = initManualAmpCompCalibrationVal;
 
   arrayPos += 2;
 
@@ -20,7 +20,7 @@ void init_DCO_calibration() {
   DCO_calibration_difference = 10000;
   PIDMinGap = 300;
 
-  samplesNumber = 21;
+  samplesNumber = 52;
 
   sampleTime = (1000000 / sNotePitches[DCO_calibration_current_note - 12]) * ((samplesNumber - 1) / 2);
 
@@ -42,7 +42,19 @@ void init_DCO_calibration() {
     pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
   }
 
-  voice_task_autotune();
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+    PW[i] = DIV_COUNTER_PW / 2;
+    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
+  }
+
+  // DISABLE PW PWM
+  // for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+  //   PW[i] = PW_CENTER[i];
+  //   pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
+  //   pwm_set_enabled(PW_PWM_SLICES[i], false);
+  // }
+
+  voice_task_autotune(0);
 
   delay(100);
 
@@ -61,16 +73,89 @@ void init_DCO_calibration() {
 /*************************************************************************************/
 /*************************************************************************************/
 /*************************************************************************************/
+void DCO_calibration() {
+
+  // TURN OFF ALL OSCILLATORS:
+  for (int i = 0; i < NUM_OSCILLATORS; i++) {
+
+    uint8_t pioNumber = VOICE_TO_PIO[i];
+    PIO pioN = pio[VOICE_TO_PIO[i]];
+    uint8_t sm1N = VOICE_TO_SM[i];
+
+    uint32_t clk_div1 = 200;
+
+    pio_sm_put(pioN, sm1N, clk_div1);
+    pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
+    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
+  }
+
+  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
+    PW[i] = DIV_COUNTER_PW / 2;
+    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
+  }
+
+  for (int i = 6; i < NUM_OSCILLATORS; i++) {
+    currentDCO = i;
+
+    restart_DCO_calibration();
+
+    if ((currentDCO % 2) == 0) {
+      find_PW_low_limit();
+      if(firstTuneFlag == true) {
+      find_PW_center(0);
+      } else{
+      find_PW_center(1);
+      }
+    }
+
+    restart_DCO_calibration();
+
+    pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PW_CENTER[currentDCO / 2]);
+
+    bool oscAmpCompCalibrationComplete = false;
+
+    while (oscAmpCompCalibrationComplete != true) {
+      voice_task_autotune(0);
+      find_gap();
+      oscAmpCompCalibrationComplete = PID_dco_calibration();
+    }
+
+    PID_find_highest_freq();
+
+    calibrationData[arrayPos] = (uint32_t)(PIDOutput * 100);
+    calibrationData[arrayPos + 1] = (uint32_t)DIV_COUNTER;
+    arrayPos += 2;
+
+    while (arrayPos < chanLevelVoiceDataSize) {
+      calibrationData[arrayPos] = 20000000;
+      calibrationData[arrayPos + 1] = DIV_COUNTER;
+      arrayPos += 2;
+    }
+
+    for (int i = 0; i < chanLevelVoiceDataSize; i++) {
+      Serial.println(calibrationData[i]);
+    }
+
+    update_FS_voice(currentDCO);
+
+    Serial.println((String) "DCO " + currentDCO + (String) " calibration finished.");
+
+    if ((currentDCO % 2) == 0) {
+      find_PW_center(1);
+      //  find_PW_high_limit();
+      find_PW_low_limit();
+    }
+
+    restart_DCO_calibration();
+  }
+  autotuneOnFlag = false;
+  init_FS();
+}
+/*************************************************************************************/
+/*************************************************************************************/
+/*************************************************************************************/
 
 void restart_DCO_calibration() {
-
-  currentDCO++;
-
-  if (currentDCO >= NUM_OSCILLATORS) {
-    autotuneOnFlag = false;
-    init_FS();
-    return;
-  }
 
   VOICE_NOTES[0] = DCO_calibration_start_note;
   DCO_calibration_current_note = DCO_calibration_start_note;
@@ -90,7 +175,7 @@ void restart_DCO_calibration() {
   DCO_calibration_difference = 10000;
   PIDMinGap = 300;
 
-  samplesNumber = 21;
+  samplesNumber = 52;
 
   sampleTime = (1000000 / sNotePitches[DCO_calibration_current_note - 12]) * ((samplesNumber - 1) / 2);
 
@@ -120,7 +205,7 @@ void restart_DCO_calibration() {
 
   ampCompCalibrationVal = PIDLimitsFormula;
 
-  voice_task_autotune();
+  voice_task_autotune(0);
 
   delay(100);
 
@@ -140,17 +225,264 @@ void restart_DCO_calibration() {
 /*************************************************************************************/
 /*************************************************************************************/
 
-void DCO_calibration() {
-  if (DCO_calibration_current_note > 31) {
-    samplesNumber = 25 * 2;
-  } else if (DCO_calibration_current_note > 51) {
-    samplesNumber = 25 * 2;
-  } else if (DCO_calibration_current_note > 71) {
-    samplesNumber = 19 * 2;
-  } else if (DCO_calibration_current_note > 91) {
-    samplesNumber = 15 * 2;
+void find_PW_center(uint8_t mode) {
+
+  uint16_t targetGap;
+  uint8_t voiceTaskMode;
+
+  if (mode = 0) {
+    DCO_calibration_current_note = manual_DCO_calibration_start_note;
+    VOICE_NOTES[0] = DCO_calibration_current_note;
+    targetGap = 20;
+    voiceTaskMode = 2;
   } else {
-    samplesNumber = 21 * 2;
+    DCO_calibration_current_note = 76;
+    VOICE_NOTES[0] = DCO_calibration_current_note;
+    targetGap = 5;
+    voiceTaskMode = 3;
+  }
+
+  currentNoteCalibrationStart = micros();
+  DCOCalibrationStart = millis();
+  DCO_calibration_difference = 10000;
+  PIDMinGap = 100;
+
+  samplesNumber = 52;
+
+  sampleTime = (1000000 / sNotePitches[DCO_calibration_current_note - 12]) * ((samplesNumber - 1) / 2);
+
+  PW[currentDCO / 2] = DIV_COUNTER_PW / 2;
+
+  PIDOutputLowerLimit = 0;
+  PIDOutputHigherLimit = DIV_COUNTER_PW;
+
+  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PW[currentDCO / 2]);
+
+  ampCompCalibrationVal = initManualAmpCompCalibrationVal;
+  PWCalibrationVal = DIV_COUNTER_PW / 2;
+
+  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PW[currentDCO / 2]);
+
+  voice_task_autotune(voiceTaskMode);
+
+  delay(100);
+
+  DCO_calibration_difference = 4000;
+  lastDCODifference = 50000;
+  lastGapFlipCount = 0;
+  lastPIDgap = 50000;
+  bestGap = 50000;
+  bestCandidate = 50000;
+  lastampCompCalibrationVal = 0;
+  DCO_calibration_lastTime = 0;
+  PIDMinGapCounter = 0;
+  pulseCounter = 0;
+
+
+  while (abs(DCO_calibration_difference) > targetGap) {
+
+    pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PWCalibrationVal);
+
+    delay(30);
+
+    find_gap();
+
+    PIDInput = (double)constrain(DCO_calibration_difference, -1500, 1500);
+
+    double PIDgap = abs(PIDSetpoint - PIDInput);  // distance away from setpoint
+
+    if (PIDgap < bestGap) {
+      bestGap = PIDgap;
+      bestCandidate = PWCalibrationVal;
+    }
+
+    bool calibrationSwing = false;
+
+    if ((DCO_calibration_difference < 0 && lastDCODifference > 0) || (DCO_calibration_difference > 0 && lastDCODifference < 0)) {
+      lastGapFlipCount++;
+      if (lastGapFlipCount >= 16) {
+        Serial.println("*********************/*/*/*/*/*/  FLIP !!! *********************/*/*/*/*/*/*********");
+
+        calibrationSwing = true;
+      }
+    } else {
+      lastGapFlipCount = 0;
+    }
+
+    if (PIDgap < PIDMinGap || calibrationSwing == true) {
+
+      PIDMinGapCounter++;
+
+      if (PIDMinGapCounter >= 2) {
+        if (autotuneDebug >= 1) {
+          Serial.println((String)(String) " - Gap = " + PIDgap + " - MIN Gap: " + (PIDMinGap) + (String) " - " + DCO_calibration_current_note);
+        }
+        Serial.println((String) "Final gap = " + PIDgap);
+      }
+    }
+
+    if (autotuneDebug >= 1) {
+      Serial.println((String) " - GAP = " + PIDgap + " - MIN GAP: " + (PIDMinGap) + (String) " -  NOTE: " + DCO_calibration_current_note);
+    }
+
+    lastDCODifference = DCO_calibration_difference;
+    lastPIDgap = PIDgap;
+
+    if (DCO_calibration_difference > 0.00) {
+      if (DCO_calibration_difference >= 1500) {
+        PWCalibrationVal += 5;
+      } else if (abs(DCO_calibration_difference) > 1000) {
+        PWCalibrationVal += 5;
+      } else if (abs(DCO_calibration_difference) > 400) {
+        PWCalibrationVal += 2;
+      } else {
+        PWCalibrationVal++;
+      }
+    } else if (DCO_calibration_difference < 0.00) {
+      if (abs(DCO_calibration_difference) >= 1500) {
+        PWCalibrationVal -= 5;
+      } else if (abs(DCO_calibration_difference) > 1000) {
+        PWCalibrationVal -= 3;
+      } else if (abs(DCO_calibration_difference) > 400) {
+        PWCalibrationVal -= 2;
+      } else {
+        PWCalibrationVal--;
+      }
+    }
+    if (PWCalibrationVal > DIV_COUNTER_PW) { PWCalibrationVal = 0; }
+
+    if (autotuneDebug >= 1) {
+      Serial.println((String) "PWCalibrationVal: " + PWCalibrationVal);
+    }
+  }
+  update_FS_PWCenter(currentDCO / 2, PWCalibrationVal);  //bestCandidate;
+  PW_CENTER[currentDCO / 2] = PWCalibrationVal;
+}
+
+void find_PW_low_limit() {
+  DCO_calibration_current_note = 76;
+  VOICE_NOTES[0] = DCO_calibration_current_note;
+  uint16_t targetGap = 1000000.00f / sNotePitches[DCO_calibration_current_note - 12] * 0.01;
+
+
+  currentNoteCalibrationStart = micros();
+  DCOCalibrationStart = millis();
+  DCO_calibration_difference = 10000;
+  PIDMinGap = 100;
+
+  samplesNumber = 52;
+
+  sampleTime = (1000000 / sNotePitches[DCO_calibration_current_note - 12]) * ((samplesNumber - 1) / 2);
+
+  PW[currentDCO / 2] = PW_CENTER[currentDCO / 2] / 2;
+  PWCalibrationVal = PW[currentDCO / 2];
+
+  PIDOutputLowerLimit = 0;
+  PIDOutputHigherLimit = DIV_COUNTER_PW;
+
+  PWCalibrationVal = PW[currentDCO / 2];
+
+  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PW[currentDCO / 2]);
+
+  voice_task_autotune(3);
+
+  delay(100);
+
+  DCO_calibration_difference = 4000;
+  lastDCODifference = 50000;
+  lastGapFlipCount = 0;
+  lastPIDgap = 50000;
+  bestGap = 50000;
+  bestCandidate = 50000;
+  lastampCompCalibrationVal = 0;
+  DCO_calibration_lastTime = 0;
+  PIDMinGapCounter = 0;
+  pulseCounter = 0;
+
+  while (abs(targetGap - DCO_calibration_difference)) {
+
+    pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PWCalibrationVal);
+
+    delay(30);
+
+    find_gap();
+
+    double PIDgap = abs(targetGap - DCO_calibration_difference);  // distance away from setpoint
+
+    bool calibrationSwing = false;
+
+    if ((DCO_calibration_difference < 0 && lastDCODifference > 0) || (DCO_calibration_difference > 0 && lastDCODifference < 0)) {
+      lastGapFlipCount++;
+      if (lastGapFlipCount >= 16) {
+        Serial.println("*********************/*/*/*/*/*/  FLIP !!! *********************/*/*/*/*/*/*********");
+
+        calibrationSwing = true;
+      }
+    } else {
+      lastGapFlipCount = 0;
+    }
+
+    if (PIDgap < PIDMinGap || calibrationSwing == true) {
+
+      PIDMinGapCounter++;
+
+      if (PIDMinGapCounter >= 2) {
+        if (autotuneDebug >= 1) {
+          Serial.println((String)(String) " - Gap = " + PIDgap + " - MIN Gap: " + (PIDMinGap) + (String) " - " + DCO_calibration_current_note);
+        }
+        Serial.println((String) "Final gap = " + PIDgap);
+      }
+    }
+
+    if (autotuneDebug >= 1) {
+      Serial.println((String) " - GAP = " + PIDgap + " - MIN GAP: " + (PIDMinGap) + (String) " -  NOTE: " + DCO_calibration_current_note);
+    }
+
+    lastDCODifference = DCO_calibration_difference;
+    lastPIDgap = PIDgap;
+
+    if (DCO_calibration_difference < 0.00) {
+      if (DCO_calibration_difference >= 1500) {
+        PWCalibrationVal += 5;
+      } else if (abs(DCO_calibration_difference) > 1000) {
+        PWCalibrationVal += 5;
+      } else if (abs(DCO_calibration_difference) > 400) {
+        PWCalibrationVal += 2;
+      } else {
+        PWCalibrationVal++;
+      }
+    } else if (DCO_calibration_difference > 0.00) {
+      if (abs(DCO_calibration_difference) >= 1500) {
+        PWCalibrationVal -= 5;
+      } else if (abs(DCO_calibration_difference) > 1000) {
+        PWCalibrationVal -= 3;
+      } else if (abs(DCO_calibration_difference) > 400) {
+        PWCalibrationVal -= 2;
+      } else {
+        PWCalibrationVal--;
+      }
+    }
+    if (PWCalibrationVal > DIV_COUNTER_PW) { PWCalibrationVal = 0; }
+
+    if (autotuneDebug >= 1) {
+      Serial.println((String) "PWCalibrationVal: " + PWCalibrationVal);
+    }
+  }
+  update_FS_PW_Low_Limit(currentDCO / 2, PWCalibrationVal);  //bestCandidate?;
+  PW_LOW_LIMIT[currentDCO / 2] = PWCalibrationVal;
+}
+
+void find_gap() {
+  if (DCO_calibration_current_note > 31) {
+    samplesNumber = 52;
+  } else if (DCO_calibration_current_note > 51) {
+    samplesNumber = 48;
+  } else if (DCO_calibration_current_note > 71) {
+    samplesNumber = 38;
+  } else if (DCO_calibration_current_note > 91) {
+    samplesNumber = 22;
+  } else {
+    samplesNumber = 50;
   }
 
   while (pulseCounter < samplesNumber) {
@@ -158,11 +490,11 @@ void DCO_calibration() {
     bool val = digitalRead(DCO_calibration_pin);
     microsNow = micros();
     if ((microsNow - DCO_calibration_lastTime) > 600000) {
-      //ampCompCalibrationVal = ampCompCalibrationVal + 1;
-      //if (ampCompCalibrationVal > PIDOutputHigherLimit) {
+      // ampCompCalibrationVal = ampCompCalibrationVal + 1;
+      // if (ampCompCalibrationVal > PIDOutputHigherLimit) {
       ampCompCalibrationVal = PIDLimitsFormula;
       //}
-      voice_task_autotune();
+      //voice_task_autotune(0);
       delay(10);
 
       pulseCounter = 0;
@@ -222,7 +554,6 @@ void DCO_calibration() {
     DCO_calibration_lastVal = 0;
     DCO_calibration_avg1_counter = 0;
     DCO_calibration_avg2_counter = 0;
-    PID_dco_calibration();
   }
 }
 
@@ -232,7 +563,7 @@ void DCO_calibration() {
 
 void DCO_calibration_find_highest_freq() {
 
-  samplesNumber = 33;
+  samplesNumber = 30;
 
   while (pulseCounter < samplesNumber) {
     bool val = digitalRead(DCO_calibration_pin);
@@ -290,22 +621,21 @@ void DCO_calibration_find_highest_freq() {
   }
 }
 
-
 /*************************************************************************************/
 /*************************************************************************************/
 /*************************************************************************************/
 
 void DCO_calibration_debug() {
   if (DCO_calibration_current_note > 31) {
-    samplesNumber = 21;
+    samplesNumber = 25 * 2;
   } else if (DCO_calibration_current_note > 51) {
-    samplesNumber = 17;
+    samplesNumber = 25 * 2;
   } else if (DCO_calibration_current_note > 71) {
-    samplesNumber = 13;
+    samplesNumber = 19 * 2;
   } else if (DCO_calibration_current_note > 91) {
-    samplesNumber = 13;
+    samplesNumber = 15 * 2;
   } else {
-    samplesNumber = 21;
+    samplesNumber = 21 * 2;
   }
 
   while (pulseCounter < samplesNumber) {
@@ -353,11 +683,8 @@ void DCO_calibration_debug() {
     DCO_calibration_lastVal = 0;
     DCO_calibration_avg1_counter = 0;
     DCO_calibration_avg2_counter = 0;
-
-    // PID_dco_calibration();
   }
 }
-
 
 // void init_tuning_tables() {
 

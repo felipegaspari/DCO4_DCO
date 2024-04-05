@@ -89,9 +89,9 @@ void serial_STM32_task() {
           if (portaSerial == 0) {
             portamento_time = 0;
           } else if (portaSerial < 200) {
-            portamento_time = (expConverter(portaSerial + 15, 100) * 2);
+            portamento_time = (expConverter(portaSerial + 15, 100) * 2000);
           } else {
-            portamento_time = map(portaSerial, 200, 255, 1000, 10000);
+            portamento_time = map(portaSerial, 200, 255, 1000000, 10000000);
           }
           break;
         }
@@ -175,6 +175,31 @@ void serial_STM32_task() {
         {
           while (Serial2.available() < 1) {}
           unisonDetune = Serial2.read();
+          break;
+        }
+      case 'f':
+        {
+          while (Serial2.available() < 1) {}
+          Serial2.readBytes(dataArray, 2);
+          ((uint8_t *)&PW[0])[0] = dataArray[0];
+          ((uint8_t *)&PW[0])[1] = dataArray[1];
+          PW[0] = DIV_COUNTER_PW - (PW[0] / 4);
+          break;
+        }
+      case 'h':
+        {
+          while (Serial2.available() < 1) {}
+          Serial2.readBytes(dataArray, 2);
+          ((uint8_t *)&LFO2toPW)[0] = dataArray[0];
+          ((uint8_t *)&LFO2toPW)[1] = dataArray[1];
+          LFO2toPW = LFO2toPW / 4;
+          LFO2toPWM_formula = (float)1 / 64 * LFO2toPW;
+          break;
+        }
+      case 'j':
+        {
+          while (Serial2.available() < 1) {}
+          PWMPotsControlManual = Serial2.read();
           break;
         }
     }

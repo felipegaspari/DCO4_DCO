@@ -6,7 +6,7 @@ void init_PID() {
   myPID.SetMode(AUTOMATIC);
 }
 
-void PID_dco_calibration() {
+bool PID_dco_calibration() {
 
   PIDInput = (double)constrain(DCO_calibration_difference, -1500, 1500);
 
@@ -17,8 +17,7 @@ void PID_dco_calibration() {
     Serial.println((String) "Total time: " + (millis() - DCOCalibrationStart));
     autotuneOnFlag = false;
     DCO_calibration_difference = 2;
-    PID_find_highest_freq();
-    return;
+    return true;
 
   } else if (micros() - currentNoteCalibrationStart > 20000000 && micros() - PIDComputeTimer > sampleTime) {
     PIDMinGap = PIDMinGap * 1.02;
@@ -60,7 +59,7 @@ void PID_dco_calibration() {
       }
 
       calibrationData[arrayPos] = (uint32_t)(sNotePitches[DCO_calibration_current_note - 12] * 100);
-      calibrationData[arrayPos + 1] = (uint32_t)ampCompCalibrationVal; //bestCandidate;
+      calibrationData[arrayPos + 1] = (uint32_t)ampCompCalibrationVal;  //bestCandidate;
       arrayPos += 2;
 
       Serial.println((uint32_t)(sNotePitches[DCO_calibration_current_note - 12] * 100) + (String) ", " + ampCompCalibrationVal + (String) ",");
@@ -70,18 +69,6 @@ void PID_dco_calibration() {
       DCO_calibration_current_note = DCO_calibration_current_note + 5;
       VOICE_NOTES[0] = DCO_calibration_current_note;
 
-
-      if (DCO_calibration_current_note > 31) {
-        samplesNumber = 21;
-      } else if (DCO_calibration_current_note > 51) {
-        samplesNumber = 17;
-      } else if (DCO_calibration_current_note > 71) {
-        samplesNumber = 15;
-      } else if (DCO_calibration_current_note > 91) {
-        samplesNumber = 13;
-      } else {
-        samplesNumber = 21;
-      }
       currentNoteCalibrationStart = micros();
       //PIDMinGap = (1240.6114554 * pow(0.9924189, (double)ampCompCalibrationVal)) * 0.05;
 
@@ -100,8 +87,7 @@ void PID_dco_calibration() {
         Serial.println((String) "Total time: " + ((millis() - DCOCalibrationStart) / 1000));
         autotuneOnFlag = false;
         DCO_calibration_difference = 2;
-        PID_find_highest_freq();
-        return;
+        return true;
       }
 
       ampCompCalibrationVal = PIDLimitsFormula;
@@ -109,10 +95,8 @@ void PID_dco_calibration() {
       sampleTime = (1000000 / sNotePitches[DCO_calibration_current_note - 12]) * ((samplesNumber - 1) / 2);
       if (sampleTime < 8000) sampleTime = 8000;
 
-      voice_task_autotune();
+      voice_task_autotune(0);
       delay(50);
-
-      //delay(5000); //FIX THIS
 
       DCO_calibration_lastTime = micros();
       DCO_calibration_difference = 4000;
@@ -120,12 +104,12 @@ void PID_dco_calibration() {
       lastGapFlipCount = 0;
       lastPIDgap = 50000;
       bestGap = 50000;
-      bestCandidate= 50000;
+      bestCandidate = 50000;
       lastampCompCalibrationVal = 0;
       DCO_calibration_lastTime = 0;
       PIDMinGapCounter = 0;
 
-      return;
+      return false;
     }
   }
 
@@ -138,9 +122,17 @@ void PID_dco_calibration() {
   lastampCompCalibrationVal = ampCompCalibrationVal;
 
   if (DCO_calibration_difference > 0.00) {
-    ampCompCalibrationVal++;
+    if (DCO_calibration_difference > PIDMinGap * 20) {
+      ampCompCalibrationVal += 2;
+    } else {
+      ampCompCalibrationVal++;
+    }
   } else if (DCO_calibration_difference < 0.00) {
-    ampCompCalibrationVal--;
+    if (abs(DCO_calibration_difference) > PIDMinGap * 20) {
+      ampCompCalibrationVal -= 2;
+    } else {
+      ampCompCalibrationVal--;
+    }
   }
 
   //ampCompCalibrationVal = constrain(ampCompCalibrationVal, PIDOutputLowerLimit, PIDOutputHigherLimit);
@@ -149,6 +141,7 @@ void PID_dco_calibration() {
     Serial.println((String) "ampCompCalibrationVal: " + ampCompCalibrationVal + (String) " -- PIDOutputLowerLimit: " + PIDOutputLowerLimit);
     Serial.print((String) " PIDOutputHigherLimit: " + PIDOutputHigherLimit + (String) " - DCO: " + currentDCO);
   }
+  return false;
 }
 
 void PID_find_highest_freq() {
@@ -158,15 +151,12 @@ void PID_find_highest_freq() {
   PIDTuningMultiplierKi = 0.33936558 * pow(1.00702176, 1779);
   PIDInput = 100;
   myPID.SetOutputLimits(sNotePitches[DCO_calibration_current_note - 15], sNotePitches[DCO_calibration_current_note - 5]);
-  myPID.SetTunings(0.035, 6, 0.003);
+  myPID.SetTunings(0.03, 5, 0.0025);
   myPID.SetSampleTime(5);
   while (abs(DCO_calibration_difference) > 0.5) {
-    //Serial.println("a");
-    voice_task_autotune();
+    voice_task_autotune(1);
     delay(4);
-    //Serial.println("b");
-    DCO_calibration_find_highest_freq();
-    //Serial.println("c");
+    find_gap();
     PIDInput = 0 - (double)DCO_calibration_difference;
 
     myPID.Compute();
@@ -176,23 +166,8 @@ void PID_find_highest_freq() {
     }
   }
   Serial.println((String) "Highest freq found: " + PIDOutput);
-  calibrationData[arrayPos] = (uint32_t)(PIDOutput * 100);
-  calibrationData[arrayPos + 1] = (uint32_t)DIV_COUNTER;
-  arrayPos += 2;
-
-  while (arrayPos < chanLevelVoiceDataSize) {
-    calibrationData[arrayPos] = 20000000;
-    calibrationData[arrayPos + 1] = DIV_COUNTER;
-    arrayPos += 2;
-  }
-
-  for (int i = 0; i < chanLevelVoiceDataSize; i++) {
-    Serial.println(calibrationData[i]);
-  }
-  update_FS_voice(currentDCO);
 
   //find highest note
-
   for (int i = 0; i < sizeof(sNotePitches); i++) {
     if (PIDOutput > sNotePitches[i] && PIDOutput < sNotePitches[i + 1]) {
       highestNoteOSC[currentDCO] = i;
@@ -200,10 +175,4 @@ void PID_find_highest_freq() {
       break;
     }
   }
-
-  autotuneOnFlag = true;
-
-  Serial.println((String) "DCO " + currentDCO + (String) " calibration finished.");
-
-  restart_DCO_calibration();
 }

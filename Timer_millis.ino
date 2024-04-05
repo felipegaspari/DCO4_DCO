@@ -3,7 +3,7 @@ void millisTimer()
 
   timer99microsFlag = 0;
   timer223microsFlag = 0;
-  // timer1msFlag = 0;
+  timer1msFlag = 0;
   // timer2340microsFlag = 0;
   // timer3543microsFlag = 0;
   // timer5msFlag = 0;
@@ -29,10 +29,10 @@ void millisTimer()
     timer223microsFlag = 1;
   }
 
-  // if ( currentMicros - timer1ms > 1001) {
-  //   timer1ms = currentMicros;
-  //   timer1msFlag = 1;
-  // }
+  if ( currentMicros - timer1ms > 1001) {
+    timer1ms = currentMicros;
+    timer1msFlag = 1;
+  }
 
   // if ( currentMicros - timer2340micros > 2340) {
   //   timer2340micros = currentMicros;
