@@ -37,6 +37,10 @@ int16_t ADSR1toDETUNE1;
 
 float ADSR1toDETUNE1_formula;
 
+int16_t ADSR1toPWM;
+float ADSR1toPWM_formula;
+
+
 adsr adsr1_voice_0(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);
 adsr adsr1_voice_1(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);
 adsr adsr1_voice_2(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);

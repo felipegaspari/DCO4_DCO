@@ -32,26 +32,26 @@ void serial_STM32_task() {
           ((uint8_t *)&LFOMultiplier)[3] = dataArray[3];
           break;
         }
-      case 'b':
-        {
-          while (Serial2.available() < 1) {}
-          LFO1Waveform = Serial2.read();
-          LFO1_class.setWaveForm(LFO1Waveform);
-          break;
-        }
-      case 'p':
-        {
-          //while (Serial2.available() < 1) {}
-          // Serial2.readBytes(dataArray, 5);
+        // case 'b':
+        //   {
+        //     while (Serial2.available() < 1) {}
+        //     LFO1Waveform = Serial2.read();
+        //     LFO1_class.setWaveForm(LFO1Waveform);
+        //     break;
+        //   }
+        // case 'p':
+        //   {
+        //     //while (Serial2.available() < 1) {}
+        //     // Serial2.readBytes(dataArray, 5);
 
-          // ((uint8_t *)&DETUNE2)[0] = dataArray[0];
-          // ((uint8_t *)&DETUNE2)[1] = dataArray[1];
-          // ((uint8_t *)&DETUNE2)[2] = dataArray[2];
-          // ((uint8_t *)&DETUNE2)[3] = dataArray[3];
-          //OSC2_serial_detune = dataArray[4];
+        //     // ((uint8_t *)&DETUNE2)[0] = dataArray[0];
+        //     // ((uint8_t *)&DETUNE2)[1] = dataArray[1];
+        //     // ((uint8_t *)&DETUNE2)[2] = dataArray[2];
+        //     // ((uint8_t *)&DETUNE2)[3] = dataArray[3];
+        //     //OSC2_serial_detune = dataArray[4];
 
-          break;
-        }
+        //     break;
+        //   }
 
       case 'q':
         {
@@ -60,41 +60,43 @@ void serial_STM32_task() {
           break;
         }
 
-      case 'u':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 2);
+      // case 'u':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     Serial2.readBytes(dataArray, 2);
 
-          ((uint8_t *)&dato_serial)[0] = dataArray[0];
-          ((uint8_t *)&dato_serial)[1] = dataArray[1];
+      //     ((uint8_t *)&dato_serial)[0] = dataArray[0];
+      //     ((uint8_t *)&dato_serial)[1] = dataArray[1];
 
-          break;
-        }
-      case 'a':
-        {
-          //Serial.println(" Received ""a"" ");
-          uint8_t autotuneByte = Serial2.read();
-          if (autotuneByte == 255) {
-            autotuneOnFlag = true;
-            init_DCO_calibration();
-          } else {
-            autotuneOnFlag = false;
-          }
-          break;
-        }
-      case 'r':
-        {
-          while (Serial2.available() < 1) {}
-          uint8_t portaSerial = Serial2.read();
-          if (portaSerial == 0) {
-            portamento_time = 0;
-          } else if (portaSerial < 200) {
-            portamento_time = (expConverter(portaSerial + 15, 100) * 2000);
-          } else {
-            portamento_time = map(portaSerial, 200, 255, 1000000, 10000000);
-          }
-          break;
-        }
+      //     break;
+      //   }
+
+      // case 'a':
+      //   {
+      //     //Serial.println(" Received ""a"" ");
+      //     uint8_t autotuneByte = Serial2.read();
+      //     if (autotuneByte == 255) {
+      //       autotuneOnFlag = true;
+      //       init_DCO_calibration();
+      //     } else {
+      //       autotuneOnFlag = false;
+      //     }
+      //     break;
+      //   }
+
+      // case 'r':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     uint8_t portaSerial = Serial2.read();
+      //     if (portaSerial == 0) {
+      //       portamento_time = 0;
+      //     } else if (portaSerial < 200) {
+      //       portamento_time = (expConverter(portaSerial + 15, 100) * 2000);
+      //     } else {
+      //       portamento_time = map(portaSerial, 200, 255, 1000000, 10000000);
+      //     }
+      //     break;
+      //   }
       case 's':
         {
           while (Serial2.available() < 1) {}
@@ -105,78 +107,78 @@ void serial_STM32_task() {
           ADSR1_release = dataArray[3] * 16;
           break;
         }
-      case 'w':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 2);
-          ((uint8_t *)&ADSR1toDETUNE1)[0] = dataArray[0];
-          ((uint8_t *)&ADSR1toDETUNE1)[1] = dataArray[1];
-          ADSR1toDETUNE1_formula = (float)1 / 1080000 * (int16_t)ADSR1toDETUNE1;
-          break;
-        }
-      case 't':
-        {
-          while (Serial2.available() < 1) {}
-          oscSync = Serial2.read();
-          break;
-        }
-      case 'l':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 2);
+      // case 'w':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     Serial2.readBytes(dataArray, 2);
+      //     ((uint8_t *)&ADSR1toDETUNE1)[0] = dataArray[0];
+      //     ((uint8_t *)&ADSR1toDETUNE1)[1] = dataArray[1];
+      //     ADSR1toDETUNE1_formula = (float)1 / 1080000 * (int16_t)ADSR1toDETUNE1;
+      //     break;
+      //   }
+      // case 't':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     oscSync = Serial2.read();
+      //     break;
+      //   }
+      // case 'l':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     Serial2.readBytes(dataArray, 2);
 
-          ((uint8_t *)&LFO1SpeedVal)[0] = dataArray[0];
-          ((uint8_t *)&LFO1SpeedVal)[1] = dataArray[1];
+      //     ((uint8_t *)&LFO1SpeedVal)[0] = dataArray[0];
+      //     ((uint8_t *)&LFO1SpeedVal)[1] = dataArray[1];
 
-          LFO1Speed = expConverterFloat(LFO1SpeedVal, 5000);
-          LFO1_class.setMode0Freq((float)LFO1Speed, micros());
+      //     LFO1Speed = expConverterFloat(LFO1SpeedVal, 5000);
+      //     LFO1_class.setMode0Freq((float)LFO1Speed, micros());
 
-          break;
-        }
-      case 'm':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 2);
+      //     break;
+      //   }
+      // case 'm':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     Serial2.readBytes(dataArray, 2);
 
-          ((uint8_t *)&LFO1toDCOVal)[0] = dataArray[0];
-          ((uint8_t *)&LFO1toDCOVal)[1] = dataArray[1];
+      //     ((uint8_t *)&LFO1toDCOVal)[0] = dataArray[0];
+      //     ((uint8_t *)&LFO1toDCOVal)[1] = dataArray[1];
 
-          //LFO1toDCO = expConverterFloat(LFO1toDCOVal, 500);
+      //     //LFO1toDCO = expConverterFloat(LFO1toDCOVal, 500);
 
-          LFO1toDCO = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000;
+      //     LFO1toDCO = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000;
 
-          break;
-        }
-      case 'y':
-        {
-          while (Serial2.available() < 1) {}
-          OSC1_interval = Serial2.read();
-          break;
-        }
-      case 'z':
-        {
-          while (Serial2.available() < 1) {}
-          OSC2_interval = Serial2.read();
-          break;
-        }
-      case 'c':
-        {
-          while (Serial2.available() < 1) {}
-          ADSR3ToOscSelect = Serial2.read();
-          break;
-        }
-      case 'd':
-        {
-          while (Serial2.available() < 1) {}
-          voiceMode = Serial2.read();
-          setVoiceMode();
-        }
-      case 'e':
-        {
-          while (Serial2.available() < 1) {}
-          unisonDetune = Serial2.read();
-          break;
-        }
+      //     break;
+      //   }
+      // case 'y':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     OSC1_interval = Serial2.read();
+      //     break;
+      //   }
+      // case 'z':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     OSC2_interval = Serial2.read();
+      //     break;
+      //   }
+      // case 'c':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     ADSR3ToOscSelect = Serial2.read();
+      //     break;
+      //   }
+      // case 'd':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     voiceMode = Serial2.read();
+      //     setVoiceMode();
+      //   }
+      // case 'e':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     unisonDetune = Serial2.read();
+      //     break;
+      //   }
       case 'f':
         {
           while (Serial2.available() < 1) {}
@@ -186,20 +188,61 @@ void serial_STM32_task() {
           PW[0] = DIV_COUNTER_PW - (PW[0] / 4);
           break;
         }
-      case 'h':
+        //case 'h':
+        // {
+        //   while (Serial2.available() < 1) {}
+        //   Serial2.readBytes(dataArray, 2);
+        //   ((uint8_t *)&LFO2toPW)[0] = dataArray[0];
+        //   ((uint8_t *)&LFO2toPW)[1] = dataArray[1];
+        //   LFO2toPW = LFO2toPW / 4;
+        //   LFO2toPWM_formula = (float)1 / 64 * LFO2toPW;
+        //   break;
+        // }
+        // case 'j':
+        //   {
+        //     while (Serial2.available() < 1) {}
+        //     PWMPotsControlManual = Serial2.read();
+        //     break;
+        //   }
+      case 'p':
         {
+          byte paramBytes[3];
+          byte finishByte = 1;
+          byte readByte = 0;
+
           while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 2);
-          ((uint8_t *)&LFO2toPW)[0] = dataArray[0];
-          ((uint8_t *)&LFO2toPW)[1] = dataArray[1];
-          LFO2toPW = LFO2toPW / 4;
-          LFO2toPWM_formula = (float)1 / 64 * LFO2toPW;
+
+          Serial2.readBytes(paramBytes, 3);
+
+          while (readByte != finishByte) {
+            readByte = Serial2.read();
+          }
+
+          uint8_t paramNumber = paramBytes[0];
+          int16_t paramValue = (int16_t)word(paramBytes[1], paramBytes[2]);
+
+          update_parameters(paramNumber, paramValue);
+
           break;
         }
-      case 'j':
+      case 'w':
         {
+          byte paramBytes[2];
+          byte finishByte = 1;
+          byte readByte = 0;
+
           while (Serial2.available() < 1) {}
-          PWMPotsControlManual = Serial2.read();
+
+          Serial2.readBytes(paramBytes, 2);
+
+          while (readByte != finishByte) {
+            readByte = Serial2.read();
+          }
+
+          uint8_t paramNumber = paramBytes[0];
+          int16_t paramValue = paramBytes[1];
+
+          update_parameters(paramNumber, (uint16_t)paramValue);
           break;
         }
     }
