@@ -29,8 +29,8 @@ byte LFO2Waveform;
 float LFO2Speed;
 float LFO2toDCO;
 uint16_t LFO2toDETUNE1;
-uint16_t LFO2toDETUNE2;
-uint16_t LFO2toOSC2DETUNE;
+volatile uint16_t LFO2toDETUNE2;
+volatile uint16_t LFO2toOSC2DETUNE;
 volatile uint16_t LFO2toPW;
 
 uint16_t LFO1SpeedVal;

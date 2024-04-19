@@ -32,4 +32,5 @@ void LFO2() {
   //LFO1Level = LFO1_CC_HALF - LFO1_class.getWave(micros());
   LFO2Level = LFO2_class.getWave(micros()) - 500;
   //PW_MOD = (float)((float)LFO2Level * LFO2toPW);
+  DETUNE_INTERNAL2 = (float)((float)LFO2Level * LFO2toDETUNE2);
 }

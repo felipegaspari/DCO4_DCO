@@ -45,6 +45,7 @@ int8_t unisonDetune = 10;
 float DETUNE = 0.0f, LAST_DETUNE = 0.0f;
 float DETUNE2 = 1.00f;
 float DETUNE_INTERNAL = 1;
+volatile float DETUNE_INTERNAL2 = 1;
 uint32_t DETUNE_INTERNAL_FIFO = 1;
 float DETUNE_INTERNAL_FIFO_float = 1;
 uint32_t* a = &DETUNE_INTERNAL_FIFO;
@@ -123,6 +124,7 @@ uint8_t OSC1_interval = 24;
 uint8_t OSC2_serial_detune = 127;
 uint8_t OSC2_interval = 24;
 float OSC2_detune = 127;
+uint16_t OSC2DetuneVal;
 
 bool PWMPotsControlManual;
 

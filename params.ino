@@ -24,11 +24,11 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
 
     case 15:
-      OSC2_detune = paramValue;
+      OSC2DetuneVal = 511 - paramValue;
       break;
 
     case 16:
-      LFO2toOSC2DETUNE = paramValue;
+      LFO2toDETUNE2 = (float)expConverterFloat(paramValue, 500) / 275000;
       break;
 
     case 17:

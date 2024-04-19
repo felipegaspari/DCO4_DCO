@@ -39,10 +39,10 @@ void voice_task() {
         note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
       }
 
-      if (OSC2_serial_detune == 127) {
+      if (OSC2DetuneVal == 255) {
         OSC2_detune = 1;
       } else {
-        OSC2_detune = 1.00f + (0.0002f * ((int)127 - OSC2_serial_detune));
+        OSC2_detune = 1.00f + (0.0002f * ((int)255 - OSC2DetuneVal));
       }
 
       volatile register float freq;

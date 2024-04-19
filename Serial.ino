@@ -21,17 +21,18 @@ void serial_STM32_task() {
   while (Serial2.available() > 0) {
 
     char commandCharacter = Serial2.read();
+    //Serial.println((char)commandCharacter);
     switch (commandCharacter) {
-      case 'v':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 4);
-          ((uint8_t *)&LFOMultiplier)[0] = dataArray[0];
-          ((uint8_t *)&LFOMultiplier)[1] = dataArray[1];
-          ((uint8_t *)&LFOMultiplier)[2] = dataArray[2];
-          ((uint8_t *)&LFOMultiplier)[3] = dataArray[3];
-          break;
-        }
+      // case 'v':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     Serial2.readBytes(dataArray, 4);
+      //     ((uint8_t *)&LFOMultiplier)[0] = dataArray[0];
+      //     ((uint8_t *)&LFOMultiplier)[1] = dataArray[1];
+      //     ((uint8_t *)&LFOMultiplier)[2] = dataArray[2];
+      //     ((uint8_t *)&LFOMultiplier)[3] = dataArray[3];
+      //     break;
+      //  }
         // case 'b':
         //   {
         //     while (Serial2.available() < 1) {}
@@ -53,12 +54,12 @@ void serial_STM32_task() {
         //     break;
         //   }
 
-      case 'q':
-        {
-          while (Serial2.available() < 1) {}
-          OSC2_serial_detune = Serial2.read();
-          break;
-        }
+      // case 'q':
+      //   {
+      //     while (Serial2.available() < 1) {}
+      //     OSC2_serial_detune = Serial2.read();
+      //     break;
+      //   }
 
       // case 'u':
       //   {
@@ -97,16 +98,7 @@ void serial_STM32_task() {
       //     }
       //     break;
       //   }
-      case 's':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 4);
-          ADSR1_attack = dataArray[0] * 16;
-          ADSR1_decay = dataArray[1] * 16;
-          ADSR1_sustain = dataArray[2] * 16;
-          ADSR1_release = dataArray[3] * 16;
-          break;
-        }
+
       // case 'w':
       //   {
       //     while (Serial2.available() < 1) {}
@@ -188,6 +180,16 @@ void serial_STM32_task() {
           PW[0] = DIV_COUNTER_PW - (PW[0] / 4);
           break;
         }
+            case 's':
+        {
+          while (Serial2.available() < 1) {}
+          Serial2.readBytes(dataArray, 4);
+          ADSR1_attack = dataArray[0] * 16;
+          ADSR1_decay = dataArray[1] * 16;
+          ADSR1_sustain = dataArray[2] * 16;
+          ADSR1_release = dataArray[3] * 16;
+          break;
+        }
         //case 'h':
         // {
         //   while (Serial2.available() < 1) {}
@@ -213,18 +215,17 @@ void serial_STM32_task() {
           while (Serial2.available() < 1) {}
 
           Serial2.readBytes(paramBytes, 3);
-
-          while (readByte != finishByte) {
-            readByte = Serial2.read();
-          }
+          readByte = Serial2.read();
 
           uint8_t paramNumber = paramBytes[0];
-          int16_t paramValue = (int16_t)word(paramBytes[1], paramBytes[2]);
+          uint16_t paramValue = (int16_t)word(paramBytes[1], paramBytes[2]);
 
+          //Serial.print((String)"   number: " + paramNumber + (String)"   value: " + paramValue);
           update_parameters(paramNumber, paramValue);
 
           break;
         }
+        
       case 'w':
         {
           byte paramBytes[2];
@@ -234,10 +235,6 @@ void serial_STM32_task() {
           while (Serial2.available() < 1) {}
 
           Serial2.readBytes(paramBytes, 2);
-
-          while (readByte != finishByte) {
-            readByte = Serial2.read();
-          }
 
           uint8_t paramNumber = paramBytes[0];
           int16_t paramValue = paramBytes[1];
