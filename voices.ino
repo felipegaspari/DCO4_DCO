@@ -39,10 +39,10 @@ void voice_task() {
         note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
       }
 
-      if (OSC2DetuneVal == 255) {
+      if (OSC2DetuneVal == 256) {
         OSC2_detune = 1;
       } else {
-        OSC2_detune = 1.00f + (0.0002f * ((int)255 - OSC2DetuneVal));
+        OSC2_detune = 1.00f + (0.0002f * ((int)256 - OSC2DetuneVal));
       }
 
       volatile register float freq;
@@ -236,80 +236,23 @@ void voice_task() {
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
 
-          // while (PW[i] < (DIV_COUNTER_PW * 0.9)) {
-          //   PW[i] = PW[i] + 1;
-          //   pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-          //   delayMicroseconds(100);
-          // }
-          // while (PW[i] > (DIV_COUNTER_PW * 0.5)) {
-          //   PW[i] = PW[i] - 1;
-          //   pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-          //   delayMicroseconds(100);
-          //}
-          // if (PW[i] > (DIV_COUNTER_PW * 0.9)) {
-          //   PW[i] = DIV_COUNTER_PW * 0.2;
-          // }
         }
       }
 
       if (timer99microsFlag) {
-
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
 
-        // while (PW[i] < (DIV_COUNTER_PW * 0.9)) {
-        //   PW[i] = PW[i] + 1;
-        //   pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-        //   delayMicroseconds(100);
-        // }
-        // while (PW[i] > (DIV_COUNTER_PW * 0.5)) {
-        //   PW[i] = PW[i] - 1;
-        //   pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-        //   delayMicroseconds(100);
-        //}
-        // if (PW[i] > (DIV_COUNTER_PW * 0.9)) {
-        //   PW[i] = DIV_COUNTER_PW * 0.2;
-        // }
-
-        //PW[i] = (LFO1Level + 624) *0.912;
-        //PW[i] = PW_CENTER[i];
         PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - ((float)LFO2Level * LFO2toPWM_formula) - PW[0]), 0, DIV_COUNTER_PW - 1);
         //PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
         pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[0], i));
 
-
-        // if (i == 0) {
-        //   Serial.println((String) " chanlevel " + chanLevel + (String) " - chanlevel2 " + chanLevel2);
-        // }
         // Serial.println("VOICE TASK 13");
         // pwm_set_chan_level(VCO_PWM_SLICES[0], pwm_gpio_to_channel(22), (uint16_t)(vcoLevel)); // VCO control
       }
       //pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), dato_serial);
       // pwm_set_chan_level(RANGE_PWM_SLICES[i + 1], pwm_gpio_to_channel(RANGE_PINS[i + 1]), dato_serial);
-
-      // voiceFreq[i] = freq;
     }
-
-    // for (int i = 0; i < 4; i++) {
-    //   if (note_on_flag_flag[i]) {
-    //     while (PW[i] < (DIV_COUNTER_PW * 0.99)) {
-    //       PW[i] = PW[i] + 1;
-    //       pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-    //       delayMicroseconds(2000);
-    //     }
-    //     while (PW[i] > (DIV_COUNTER_PW * 0.05)) {
-    //       PW[i] = PW[i] - 1;
-    //       pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-    //       delayMicroseconds(2000);
-    //     }
-    //             while (PW[i] < PW_CENTER[i]) {
-    //       PW[i] = PW[i] + 1;
-    //       pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-    //       delayMicroseconds(2000);
-    //     }
-    //   }
-    // }
-
     note_on_flag_flag[i] = false;
   }
 

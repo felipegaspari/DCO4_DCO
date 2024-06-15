@@ -51,7 +51,7 @@ void init_FS() {
     }
     freq_to_amp_comp_array[i] = (int_fast32_t)int32Data;
     //   Serial.println(freq_to_amp_comp_array[i]);
-    delay(20);
+    //delay(20);
   }
 
   //   Serial.println("B2");
@@ -222,6 +222,9 @@ void init_FS() {
   }
 
 #endif
+
+//singleFileDrive.begin("voiceTables", "voicetables.txt");
+
 }
 
 void update_FS_voice(byte voiceN) {

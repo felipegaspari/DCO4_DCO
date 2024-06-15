@@ -45,7 +45,7 @@ void ADSR1_set_restart() {
 
 void ADSR1_change_curves() {
   for (int i = 0; i < NUM_VOICES; i++) {
-    ADSRVoices[i].adsr1_voice.changeCurves(ADSR_1_DACSIZE, ADSR1_curve1, ADSR1_curve2);
+    //ADSRVoices[i].adsr1_voice.changeCurves(ADSR_1_DACSIZE, ADSR1_curve1, ADSR1_curve2);
     ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);    // initialize attack
     ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);      // initialize decay
     ADSRVoices[i].adsr1_voice.setSustain(ADSR1_sustain);  // initialize sustain

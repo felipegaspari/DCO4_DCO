@@ -24,7 +24,7 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
 
     case 15:
-      OSC2DetuneVal = 511 - paramValue;
+      OSC2DetuneVal = 512 - paramValue;
       break;
 
     case 16:

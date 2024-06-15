@@ -101,10 +101,10 @@ void DCO_calibration() {
 
     if ((currentDCO % 2) == 0) {
       find_PW_low_limit();
-      if(firstTuneFlag == true) {
-      find_PW_center(0);
-      } else{
-      find_PW_center(1);
+      if (firstTuneFlag == true) {
+        find_PW_center(0);
+      } else {
+        find_PW_center(1);
       }
     }
 
@@ -686,6 +686,98 @@ void DCO_calibration_debug() {
   }
 }
 
+/*************************************************************************************/
+/*************************************************************************************/
+/*************************************************************************************/
+
+void find_vco_frequency() {
+  if (DCO_calibration_current_note > 31) {
+    samplesNumber = 52;
+  } else if (DCO_calibration_current_note > 51) {
+    samplesNumber = 48;
+  } else if (DCO_calibration_current_note > 71) {
+    samplesNumber = 38;
+  } else if (DCO_calibration_current_note > 91) {
+    samplesNumber = 22;
+  } else {
+    samplesNumber = 50;
+  }
+
+  while (pulseCounter < samplesNumber) {
+
+    bool val = digitalRead(DCO_calibration_pin);
+    microsNow = micros();
+    if ((microsNow - DCO_calibration_lastTime) > 600000) {
+      // ampCompCalibrationVal = ampCompCalibrationVal + 1;
+      // if (ampCompCalibrationVal > PIDOutputHigherLimit) {
+      ampCompCalibrationVal = PIDLimitsFormula;
+      //}
+      //voice_task_autotune(0);
+      delay(10);
+
+      pulseCounter = 0;
+      DCO_calibration_difference = 1500;
+      val = 0;
+      DCO_calibration_lastVal = 0;
+
+      if (autotuneDebug >= 3) {
+        Serial.println("Timeout loop");
+        Serial.println((String) "ampCompCalibrationVal: " + ampCompCalibrationVal);
+      }
+      // val = digitalRead(DCO_calibration_pin);
+      microsNow = micros();
+      DCO_calibration_lastTime = microsNow;
+      // } else {
+      //   PID_dco_calibration();
+      // }
+    }
+    if (val != DCO_calibration_lastVal) {
+      if ((microsNow - DCO_calibration_lastTime) >= 30) {
+
+        DCO_calibration_lastVal = val;
+        // if (pulseCounter == 0) {
+        //   DCO_calibration_lastTime = microsNow;
+        // }
+        if (pulseCounter == 1 && val == 0) {
+          pulseCounter == 0;
+        }
+        if (pulseCounter > 0) {
+          if (val == 0) {
+            DCO_calibration_avg2 += microsNow - DCO_calibration_lastTime;
+            DCO_calibration_avg2_counter++;
+          } else {
+            DCO_calibration_avg1 += microsNow - DCO_calibration_lastTime;
+            DCO_calibration_avg1_counter++;
+          }
+        }
+        DCO_calibration_lastTime = microsNow;
+        pulseCounter++;
+      }
+    }
+  }
+
+  if (pulseCounter == samplesNumber) {
+    //  Serial.print((String) "ON= " + (1000000 / (DCO_calibration_avg1 / 45)) + (String) " - ");
+    //  Serial.println((String) "OFF= " + (1000000 / (DCO_calibration_avg2 / 45)));
+
+    // Serial.println(1000000 / ((DCO_calibration_avg1 + DCO_calibration_avg2) / 90));
+    double freqReading = (double)1000000 / double((DCO_calibration_avg1 + DCO_calibration_avg2) / (double)(samplesNumber - 2 ) * 2);
+
+    DCO_calibration_difference = sNotePitches[DCO_calibration_current_note - 12] - freqReading;
+
+    if (autotuneDebug >= 1) {
+      Serial.println((String) "DCO_calibration_difference: " + DCO_calibration_difference + (String)" - Freq reading: " + freqReading);
+      Serial.println((String) "NOTE: " + DCO_calibration_current_note + (String)" - NOTE Frequency: " +  sNotePitches[DCO_calibration_current_note - 12]);
+    }
+
+    pulseCounter = 0;
+    DCO_calibration_avg1 = 0;
+    DCO_calibration_avg2 = 0;
+    DCO_calibration_lastVal = 0;
+    DCO_calibration_avg1_counter = 0;
+    DCO_calibration_avg2_counter = 0;
+  }
+}
 // void init_tuning_tables() {
 
 //   for (int i = 0; i < pwm_to_vco_array_size; i++) {

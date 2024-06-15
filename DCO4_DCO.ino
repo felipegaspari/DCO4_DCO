@@ -6,7 +6,7 @@
 
 #include <Adafruit_TinyUSB.h>
 #include <MIDI.h>
-#include "tusb_config.h"
+//#include "tusb_config.h"
 
 #include "pico/stdlib.h"
 // #include "hardware/pio.h"
@@ -16,7 +16,7 @@
 // #include "hardware/spi.h"
 
 #include "LittleFS.h"
-
+#include <SingleFileDrive.h>
 // #include <EEPROM.h>
 
 #include "globals.h"
@@ -124,7 +124,7 @@ void loop1() {
   // unsigned long loop1_start_time = micros();
   // unsigned long loop1_total_time;
 
-  millisTimer();
+millisTimer();
 
   if (autotuneOnFlag == true) {
     // Manual tuning :VOICE_NOTES[0] = DCO_calibration_start_note - 5;
@@ -142,10 +142,6 @@ void loop1() {
       delay(1);
       DCO_calibration();
     }
-    // if(timer200msFlag) {
-    //   ampCompCalibrationVal++;
-    //// Serial.println(ampCompCalibrationVal);
-    // }
   } else {
 
 

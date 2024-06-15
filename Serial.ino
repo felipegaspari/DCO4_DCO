@@ -7,13 +7,13 @@ void init_serial() {
   Serial1.setTX(0);
   Serial1.begin(31250);
 
-  Serial2.setFIFOSize(256);
-  Serial2.setPollingMode(true);
+  Serial2.setFIFOSize(512);
+  Serial2.setPollingMode(false);
   Serial2.setRX(21);
   Serial2.setTX(20);
   Serial2.begin(2500000);
 
-  Serial.begin(2000000);
+ // Serial.begin(2000000);
 }
 
 void serial_STM32_task() {
