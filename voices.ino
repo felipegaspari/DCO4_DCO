@@ -135,8 +135,8 @@ void voice_task() {
       }
 
       float unisonMODIFIER = 0;
-      if (voiceMode == 2) {
-        unisonMODIFIER = (0.0001f * unisonDetune);
+      if (unisonDetune != 0) {
+        unisonMODIFIER = (0.00006f * unisonDetune);
         if ((i & 0x01) == 0) {
           unisonMODIFIER = 0 - (unisonMODIFIER * (i - 1));
         } else {
@@ -144,11 +144,19 @@ void voice_task() {
         }
       }
 
+      float DETUNE_DRIFT_OSC1 = 0;
+      float DETUNE_DRIFT_OSC2 = 0;
+
+      if (analogDrift != 0) {
+        DETUNE_DRIFT_OSC1 = (float)((float)LFO_DRIFT_LEVEL[DCO_A] * 0.0000005f * analogDrift);
+        DETUNE_DRIFT_OSC2 = (float)((float)LFO_DRIFT_LEVEL[DCO_B] * 0.0000005f * analogDrift);
+      }
+
       /*   Este bloque tarda 10 microsegundos */
 
-      freq = (freq * (DETUNE_INTERNAL_FIFO_float + ADSRModifierOSC1 + unisonMODIFIER + 1)) - (freq * ((0x2000 - midi_pitch_bend) / 67000));
+      freq = (freq * (DETUNE_INTERNAL_FIFO_float + ADSRModifierOSC1 + unisonMODIFIER + DETUNE_DRIFT_OSC1 + 1)) - (freq * ((0x2000 - midi_pitch_bend) / 67000));
 
-      freq2 = (freq2 * (DETUNE_INTERNAL_FIFO_float + ADSRModifierOSC2 + unisonMODIFIER + 1) * OSC2_detune) - (freq2 * ((0x2000 - midi_pitch_bend) / 67000));
+      freq2 = (freq2 * (DETUNE_INTERNAL_FIFO_float + ADSRModifierOSC2 + unisonMODIFIER + DETUNE_DRIFT_OSC2 + 1) * OSC2_detune) - (freq2 * ((0x2000 - midi_pitch_bend) / 67000));
 
       /* FIN */
 
@@ -235,7 +243,6 @@ void voice_task() {
 
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
-
         }
       }
 

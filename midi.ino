@@ -2,17 +2,29 @@ void init_midi() {
   MIDI_USB.begin(MIDI_CHANNEL_OMNI);
   MIDI_USB.setHandleNoteOn(handleNoteOn);
   MIDI_USB.setHandleNoteOff(handleNoteOff);
+  MIDI_USB.setHandleControlChange(handleControlChange);
+  MIDI_USB.setHandleProgramChange(handleProgramChange);
+
 
   MIDI_SERIAL.begin(MIDI_CHANNEL_OMNI);
   MIDI_SERIAL.setHandleNoteOn(handleNoteOn);
   MIDI_SERIAL.setHandleNoteOff(handleNoteOff);
+  MIDI_SERIAL.setHandleControlChange(handleControlChange);
+  MIDI_SERIAL.setHandleProgramChange(handleProgramChange);
 }
+
 
 void handleNoteOn(byte channel, byte pitch, byte velocity) {
   note_on(pitch, velocity);
 }
 void handleNoteOff(byte channel, byte pitch, byte velocity) {
   note_off(pitch);
+}
+
+void handleControlChange(byte channel, byte number, byte value) {
+}
+
+void handleProgramChange(byte channel, byte program) {
 }
 
 void note_on(uint8_t note, uint8_t velocity) {
@@ -111,108 +123,4 @@ void note_off(uint8_t note) {
       serial_send_note_off(i);
     }
   }
-  // if (portamento_stop == note) {
-  //   portamento_start = portamento_stop;
-  //   portamento_stop = 0;
-  //   portamento_cur_freq = 0.0f;
-  // }
-
-  // if (portamento_start == note) {
-  //   portamento_stop = 0;
-  //   portamento_cur_freq = 0.0f;
-  // }
-}
-
-void serial_midi_task() {
-  // if (!uart_is_readable(uart0))
-  //   return;
-
-  // uint8_t lsb = 0, msb = 0;
-  // uint8_t data = uart_getc(uart0);
-
-  // LED_BLINK_START = millis();
-  // digitalWrite(LED_BUILTIN, HIGH);
-
-  // // status
-  // if (data >= 0xF0 && data <= 0xF7) {
-  //   midi_serial_status = 0;
-  //   return;
-  // }
-
-  // // realtime message
-  // if (data >= 0xF8 && data <= 0xFF) {
-  //   return;
-  // }
-
-  // if (data >= 0x80 && data <= 0xEF) {
-  //   midi_serial_status = data;
-  // }
-
-  // if (midi_serial_status >= 0x80 && midi_serial_status <= 0x90 || midi_serial_status >= 0xB0 && midi_serial_status <= 0xBF ||  // cc messages
-  //     midi_serial_status >= 0xE0 && midi_serial_status <= 0xEF) {
-  //   lsb = uart_getc(uart0);
-  //   msb = uart_getc(uart0);
-  // }
-
-  // if (midi_serial_status == (0x90 | (MIDI_CHANNEL - 1))) {
-  //   if (msb > 0) {
-  //     note_on(lsb, msb);
-  //   } else {
-  //     note_off(lsb);
-  //   }
-  // }
-
-  // if (midi_serial_status == (0x80 | (MIDI_CHANNEL - 1))) {
-  //   note_off(lsb);
-  // }
-
-  // if (midi_serial_status == (0xE0 | (MIDI_CHANNEL - 1))) {
-  //   midi_pitch_bend = lsb | (msb << 7);
-  // }
-
-  // if (midi_serial_status == (0xB0 | (MIDI_CHANNEL - 1))) {
-  //   if (lsb == 5) {  // portamento time
-  //     portamento_time = msb;
-  //   }
-  //   if (lsb == 65) {  // portamento on/off
-  //     portamento = msb > 63;
-  //   }
-  // }
-}
-
-void usb_midi_task() {
-  // if (tud_midi_available() < 4)
-  //   return;
-
-  // uint8_t buff[4];
-
-  // LED_BLINK_START = millis();
-  // digitalWrite(LED_BUILTIN, HIGH);
-
-  // if (tud_midi_packet_read(buff)) {
-  //   if (buff[1] == (0x90 | (MIDI_CHANNEL - 1))) {
-  //     if (buff[3] > 0) {
-  //       note_on(buff[2], buff[3]);
-  //     } else {
-  //       note_off(buff[2]);
-  //     }
-  //   }
-
-  //   if (buff[1] == (0x80 | (MIDI_CHANNEL - 1))) {
-  //     note_off(buff[2]);
-  //   }
-
-  //   if (buff[1] == (0xE0 | (MIDI_CHANNEL - 1))) {
-  //     midi_pitch_bend = buff[2] | (buff[3] << 7);
-  //   }
-
-  //   if (midi_serial_status == (0xB0 | (MIDI_CHANNEL - 1))) {
-  //     if (buff[2] == 5) {  // portamento time
-  //       portamento_time = buff[3];
-  //     }
-  //     if (buff[2] == 65) {  // portamento on/off
-  //       portamento = buff[3] > 63;
-  //     }
-  //   }
-  // }
 }

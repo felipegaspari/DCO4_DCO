@@ -42,7 +42,7 @@ void init_DCO_calibration() {
     pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
   }
 
-  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
     PW[i] = DIV_COUNTER_PW / 2;
     pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
   }
@@ -94,17 +94,17 @@ void DCO_calibration() {
     pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
   }
 
-  for (int i = 6; i < NUM_OSCILLATORS; i++) {
+  for (int i = 0; i < NUM_OSCILLATORS; i++) {
     currentDCO = i;
 
     restart_DCO_calibration();
 
     if ((currentDCO % 2) == 0) {
-      find_PW_low_limit();
       if (firstTuneFlag == true) {
-        find_PW_center(0);
+        find_PW_center(0);    
       } else {
         find_PW_center(1);
+        //find_PW_low_limit();
       }
     }
 
@@ -141,9 +141,10 @@ void DCO_calibration() {
     Serial.println((String) "DCO " + currentDCO + (String) " calibration finished.");
 
     if ((currentDCO % 2) == 0) {
+      //Falta agregar que use los nuevos datos antes de encontrar el centro
       find_PW_center(1);
-      //  find_PW_high_limit();
-      find_PW_low_limit();
+      //find_PW_high_limit();
+      //find_PW_low_limit();
     }
 
     restart_DCO_calibration();
@@ -166,7 +167,7 @@ void restart_DCO_calibration() {
   arrayPos += 2;
 
   calibrationData[arrayPos] = (uint32_t)(sNotePitches[DCO_calibration_current_note - 17] * 100);
-  calibrationData[arrayPos + 1] = 60;
+  calibrationData[arrayPos + 1] = initManualAmpCompCalibrationVal;
 
   arrayPos += 2;
 
@@ -230,7 +231,7 @@ void find_PW_center(uint8_t mode) {
   uint16_t targetGap;
   uint8_t voiceTaskMode;
 
-  if (mode = 0) {
+  if (mode == 0) {
     DCO_calibration_current_note = manual_DCO_calibration_start_note;
     VOICE_NOTES[0] = DCO_calibration_current_note;
     targetGap = 20;
@@ -761,13 +762,13 @@ void find_vco_frequency() {
     //  Serial.println((String) "OFF= " + (1000000 / (DCO_calibration_avg2 / 45)));
 
     // Serial.println(1000000 / ((DCO_calibration_avg1 + DCO_calibration_avg2) / 90));
-    double freqReading = (double)1000000 / double((DCO_calibration_avg1 + DCO_calibration_avg2) / (double)(samplesNumber - 2 ) * 2);
+    double freqReading = (double)1000000 / double((DCO_calibration_avg1 + DCO_calibration_avg2) / (double)(samplesNumber - 2) * 2);
 
     DCO_calibration_difference = sNotePitches[DCO_calibration_current_note - 12] - freqReading;
 
     if (autotuneDebug >= 1) {
-      Serial.println((String) "DCO_calibration_difference: " + DCO_calibration_difference + (String)" - Freq reading: " + freqReading);
-      Serial.println((String) "NOTE: " + DCO_calibration_current_note + (String)" - NOTE Frequency: " +  sNotePitches[DCO_calibration_current_note - 12]);
+      Serial.println((String) "DCO_calibration_difference: " + DCO_calibration_difference + (String) " - Freq reading: " + freqReading);
+      Serial.println((String) "NOTE: " + DCO_calibration_current_note + (String) " - NOTE Frequency: " + sNotePitches[DCO_calibration_current_note - 12]);
     }
 
     pulseCounter = 0;

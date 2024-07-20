@@ -22,7 +22,7 @@ unsigned long DCOCalibrationStart;
 bool DCO_calibration_lastVal = 0;
 
 volatile uint16_t ampCompCalibrationVal;
-volatile uint16_t initManualAmpCompCalibrationVal = 60;
+volatile uint16_t initManualAmpCompCalibrationVal = 50;
 
 
 int pulseCounter = 0;

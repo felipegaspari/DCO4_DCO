@@ -47,19 +47,22 @@
 // ****************************************************************************************** //
 
 void setup() {
-  set_sys_clock_khz(sysClock, true);
+  //set_sys_clock_khz(sysClock, true);
   // EEPROM.begin(512);
   init_serial();
   init_midi();
 
   init_LFOs();
-
+ init_DRIFT_LFOs();
 
   // init_tuner();
   // init_tuning_tables();
 
   pinMode(23, OUTPUT);
   digitalWrite(23, HIGH);
+
+  pinMode(24, OUTPUT);  // Fix pin on DCO BOARD
+  digitalWrite(24, HIGH);
 
   USBDevice.setManufacturerDescriptor("FELA         ");
   USBDevice.setProductDescriptor("DCO-4        ");
@@ -72,7 +75,7 @@ void setup() {
 }
 
 void setup1() {
-  set_sys_clock_khz(sysClock, true);
+  //set_sys_clock_khz(sysClock, true);
   init_pwm();
   init_pio();
   init_voices();
@@ -83,7 +86,7 @@ void setup1() {
 
   autotuneOnFlag = false;
   manualTuneOnFlag = false;
-  firstTuneFlag = false;
+  firstTuneFlag = true;
   ampCompCalibrationVal = initManualAmpCompCalibrationVal;
 
   if (autotuneOnFlag == true) {
@@ -105,6 +108,9 @@ void loop() {
 
     LFO1();
     LFO2();
+    DRIFT_LFOs();
+    
+
     // uint32_t a = micros();
     uint32_t fbits = 0;
     memcpy(&fbits, &DETUNE_INTERNAL, sizeof fbits);
@@ -148,6 +154,7 @@ millisTimer();
     loop1_micros = micros();
 
     if ((loop1_micros - loop1_microsLast) > 100) {
+      
       ADSR_update();
       rp2040.fifo.pop_nb(a);
       memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);

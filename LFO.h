@@ -10,12 +10,32 @@ static const uint16_t LF01_CC_THIRD = LFO1_CC / 3;
 static const uint16_t LFO2_CC = 1024;
 static const uint16_t LFO2_CC_HALF = LFO2_CC / 2;
 
+static const uint16_t LFO_DRIFT_CC = 1000;
+static const uint16_t LFO_DRIFT_CC_HALF = LFO_DRIFT_CC / 2;
+
 //////////////// LFO ian ////////////////////////////////////////
 
 lfo LFO1_class(LFO1_CC + 1);
 lfo LFO2_class(LFO2_CC);
 
+lfo LFO_DRIFT_CLASS[8] = {
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC),
+  lfo(LFO_DRIFT_CC)
+};
+
+
 /////////////////////////////////////////////////////////////////
+byte LFO_DRIFT_WAVEFORM = 2;
+float LFO_DRIFT_SPEED_OFFSET[8];
+float LFO_DRIFT_SPEED = 0.6;
+volatile int16_t LFO_DRIFT_LEVEL[8];
+
 
 int16_t LFO1Level;
 byte LFO1Waveform = 3;

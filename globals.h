@@ -41,7 +41,11 @@ uint8_t voiceMode = 2;
 uint8_t oscSync = 0;
 uint8_t polyMode = 1;
 
-int8_t unisonDetune = 10;
+uint8_t unisonDetune = 10;
+uint8_t analogDrift = 0;
+uint8_t analogDriftSpeed = 0;
+uint8_t analogDriftSpread = 0;
+
 float DETUNE = 0.0f, LAST_DETUNE = 0.0f;
 float DETUNE2 = 1.00f;
 float DETUNE_INTERNAL = 1;
