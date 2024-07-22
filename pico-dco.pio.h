@@ -51,20 +51,30 @@ static inline pio_sm_config frequency_program_get_default_config(uint offset) {
     sm_config_set_sideset(&c, 2, true, false);
     return c;
 }
+
+void init_sm_pin(PIO pio, uint sm, uint offset, uint pin) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_config c = frequency_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_set_pins(&c, pin, 1);
+    pio_sm_init(pio, sm, offset, &c);
+}
+
 #endif
 
-// ---------------- //
-// frequency_pulse1 //
-// ---------------- //
+// -------------- //
+// frequency_sync //
+// -------------- //
 
-#define frequency_pulse1_wrap_target 0
-#define frequency_pulse1_wrap 19
+#define frequency_sync_wrap_target 0
+#define frequency_sync_wrap 19
 
-static const uint16_t frequency_pulse1_program_instructions[] = {
+static const uint16_t frequency_sync_program_instructions[] = {
             //     .wrap_target
     0x0040, //  0: jmp    x--, 0                     
     0xa027, //  1: mov    x, osr                     
-    0xe000, //  2: set    pins, 0                    
+    0xf000, //  2: set    pins, 0         side 0     
     0x0043, //  3: jmp    x--, 3                     
     0xa027, //  4: mov    x, osr                     
     0x0045, //  5: jmp    x--, 5                     
@@ -81,30 +91,77 @@ static const uint16_t frequency_pulse1_program_instructions[] = {
     0xa027, // 16: mov    x, osr                     
     0x0051, // 17: jmp    x--, 17                    
     0xa022, // 18: mov    x, y                       
-    0xe001, // 19: set    pins, 1                    
+    0xf801, // 19: set    pins, 1         side 1     
+            //     .wrap
+};
+
+#if !PICO_NO_HARDWARE
+static const struct pio_program frequency_sync_program = {
+    .instructions = frequency_sync_program_instructions,
+    .length = 20,
+    .origin = -1,
+};
+
+static inline pio_sm_config frequency_sync_program_get_default_config(uint offset) {
+    pio_sm_config c = pio_get_default_sm_config();
+    sm_config_set_wrap(&c, offset + frequency_sync_wrap_target, offset + frequency_sync_wrap);
+    sm_config_set_sideset(&c, 2, true, false);
+    return c;
+}
+
+void frequency_sync(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
+    pio_sm_config c = frequency_sync_program_get_default_config(offset);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    //pio_sm_set_consecutive_pindirs(pio, sm, pin2, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+    //sm_config_set_set_pins(&c, pin2, 1);
+    //sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_sideset_pins(&c, pin2); 
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin2);   
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+#endif
+
+// ---------------- //
+// frequency_pulse1 //
+// ---------------- //
+
+#define frequency_pulse1_wrap_target 0
+#define frequency_pulse1_wrap 4
+
+static const uint16_t frequency_pulse1_program_instructions[] = {
+            //     .wrap_target
+    0xb026, //  0: mov    x, isr          side 0     
+    0xa042, //  1: nop                               
+    0x0042, //  2: jmp    x--, 2                     
+    0xb822, //  3: mov    x, y            side 1     
+    0x0044, //  4: jmp    x--, 4                     
             //     .wrap
 };
 
 #if !PICO_NO_HARDWARE
 static const struct pio_program frequency_pulse1_program = {
     .instructions = frequency_pulse1_program_instructions,
-    .length = 20,
+    .length = 5,
     .origin = -1,
 };
 
 static inline pio_sm_config frequency_pulse1_program_get_default_config(uint offset) {
     pio_sm_config c = pio_get_default_sm_config();
     sm_config_set_wrap(&c, offset + frequency_pulse1_wrap_target, offset + frequency_pulse1_wrap);
+    sm_config_set_sideset(&c, 2, true, false);
     return c;
 }
 
-void init_sm_pin(PIO pio, uint sm, uint offset, uint pin) {
-    pio_gpio_init(pio, pin);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
-    pio_sm_config c = frequency_program_get_default_config(offset);
-    sm_config_set_sideset_pins(&c, pin);
-    sm_config_set_set_pins(&c, pin, 1);
-    pio_sm_init(pio, sm, offset, &c);
+static inline void frequency_pulse1_program_init(PIO pio, uint sm, uint offset, uint pin) {
+   pio_gpio_init(pio, pin);
+   pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+   pio_sm_config c = frequency_pulse1_program_get_default_config(offset);
+   sm_config_set_sideset_pins(&c, pin);
+   sm_config_set_set_pins(&c, pin, 1);
+   pio_sm_init(pio, sm, offset, &c);
 }
 
 #endif

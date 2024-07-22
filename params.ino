@@ -80,6 +80,10 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
       }
       break;
 
+    case 31:
+      syncMode = paramValue;
+      setSyncMode();
+
     case 40:
       LFO1toDCOVal = paramValue;
       LFO1toDCO = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000;

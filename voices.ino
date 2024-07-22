@@ -170,10 +170,12 @@ void voice_task() {
 
       // pio_clkdiv_restart_sm_mask(pio1, (1<<0)+(1<<1));
 
-      uint8_t pioNumber = VOICE_TO_PIO[i * 2];
-      PIO pioN = pio[VOICE_TO_PIO[i * 2]];
-      uint8_t sm1N = VOICE_TO_SM[i * 2];
-      uint8_t sm2N = sm1N + 1;
+      uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
+      uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
+      PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
+      PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
+      uint8_t sm1N = VOICE_TO_SM[DCO_A];
+      uint8_t sm2N = VOICE_TO_SM[DCO_B];
 
       //voice_task_3_time = micros() - voice_task_start_time;
 
@@ -187,8 +189,31 @@ void voice_task() {
 
       //voice_task_4_time = micros() - voice_task_start_time;
 
-      uint16_t chanLevel = get_chan_level_lookup((int_fast32_t)(freq * 100), DCO_A);
-      uint16_t chanLevel2 = get_chan_level_lookup((int_fast32_t)(freq2 * 100), DCO_B);
+      uint16_t chanLevel;
+      uint16_t chanLevel2;
+
+      switch (syncMode) {
+        case 0:
+          chanLevel = get_chan_level_lookup((int_fast32_t)(freq * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int_fast32_t)(freq2 * 100), DCO_B);
+          break;
+        case 1:
+          if (freq2 > freq) {
+            chanLevel = get_chan_level_lookup((int_fast32_t)(freq2 * 100), DCO_A);
+          } else {
+            chanLevel = get_chan_level_lookup((int_fast32_t)(freq * 100), DCO_A);
+          }
+          chanLevel2 = get_chan_level_lookup((int_fast32_t)(freq2 * 100), DCO_B);
+          break;
+        case 2:
+          if (freq > freq2) {
+            chanLevel2 = get_chan_level_lookup((int_fast32_t)(freq * 100), DCO_B);
+          } else {
+            chanLevel2 = get_chan_level_lookup((int_fast32_t)(freq2 * 100), DCO_B);
+          }
+          chanLevel = get_chan_level_lookup((int_fast32_t)(freq * 100), DCO_A);
+          break;
+      }
 
       //VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
@@ -198,43 +223,43 @@ void voice_task() {
           // CLOCKDIVFRACTION: adds randomness and makes oscillators more "free running". Currently calculations are too complex. Needs to be simpler.
           //uint_fast32_t clockdivFraction = clk_div1 /7;
           //uint_fast32_t clockdiv2Fraction = clk_div2 / 10;
-          pio_sm_put(pioN, sm1N, clk_div1 /* - clockdivFraction + random(0, clockdivFraction * 2)*/);
-          pio_sm_put(pioN, sm2N, clk_div2 /* - clockdiv2Fraction + random(0, clockdiv2Fraction * 2)*/);
-          pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-          pio_sm_exec(pioN, sm2N, pio_encode_pull(false, false));
+          pio_sm_put(pioN_A, sm1N, clk_div1 /* - clockdivFraction + random(0, clockdivFraction * 2)*/);
+          pio_sm_put(pioN_B, sm2N, clk_div2 /* - clockdiv2Fraction + random(0, clockdiv2Fraction * 2)*/);
+          pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
 
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
         } else {
           uint_fast32_t clockdivFraction = clk_div1 / 400;
           uint_fast32_t clockdiv2Fraction = clk_div2 / 350;
-          pio_sm_put(pioN, sm1N, clk_div1 - clockdivFraction + random(0, clockdivFraction * 2));
-          pio_sm_put(pioN, sm2N, clk_div2 - clockdiv2Fraction + random(0, clockdiv2Fraction * 2));
-          pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-          pio_sm_exec(pioN, sm2N, pio_encode_pull(false, false));
+          pio_sm_put(pioN_A, sm1N, clk_div1 - clockdivFraction + random(0, clockdivFraction * 2));
+          pio_sm_put(pioN_B, sm2N, clk_div2 - clockdiv2Fraction + random(0, clockdiv2Fraction * 2));
+          pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
         }
       } else {
         // Serial.println("VOICE TASK 5a");
-        pio_sm_put(pioN, sm1N, clk_div1);
-        pio_sm_put(pioN, sm2N, clk_div2);
-        pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-        pio_sm_exec(pioN, sm2N, pio_encode_pull(false, false));
+        pio_sm_put(pioN_A, sm1N, clk_div1);
+        pio_sm_put(pioN_B, sm2N, clk_div2);
+        pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+        pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
         if (note_on_flag_flag[i]) {
 
           switch (oscSync) {
             case 1:
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(9 + offset[pioNumber]));  // OSC Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(9 + offset[pioNumber]));
+              pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(9 + offset[pioNumberA]));  // OSC Sync MODE
+              pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(9 + offset[pioNumberB]));
               break;
 
             case 2:
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(3 + offset[pioNumber]));  // OSC Half Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(11 + offset[pioNumber]));
+              pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(3 + offset[pioNumberA]));  // OSC Half Sync MODE
+              pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(11 + offset[pioNumberB]));
               break;
 
             case 3:
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(3 + offset[pioNumber]));  // OSC 3rd-quarter Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(9 + offset[pioNumber]));
+              pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(3 + offset[pioNumberA]));  // OSC 3rd-quarter Sync MODE
+              pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(9 + offset[pioNumberB]));
               break;
 
             default:
@@ -609,10 +634,12 @@ void voice_task_debug() {
       freq = (float)sNotePitches[note1];
       freq2 = (float)sNotePitches[note2];
 
-      uint8_t pioNumber = VOICE_TO_PIO[i * 2];
-      PIO pioN = pio[VOICE_TO_PIO[i * 2]];
-      uint8_t sm1N = VOICE_TO_SM[i * 2];
-      uint8_t sm2N = sm1N + 1;
+      uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
+      uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
+      PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
+      PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
+      uint8_t sm1N = VOICE_TO_SM[DCO_A];
+      uint8_t sm2N = VOICE_TO_SM[DCO_B];
 
       volatile register uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz / freq) - eightPioPulseLength - 1);
 
@@ -637,16 +664,16 @@ void voice_task_debug() {
       //VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
       if (oscSync == 0) {
 
-        pio_sm_put(pioN, sm1N, clk_div1);
-        pio_sm_put(pioN, sm2N, clk_div2);
-        pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-        pio_sm_exec(pioN, sm2N, pio_encode_pull(false, false));
+        pio_sm_put(pioN_A, sm1N, clk_div1);
+        pio_sm_put(pioN_B, sm2N, clk_div2);
+        pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+        pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
       } else {
         // Serial.println("VOICE TASK 5a");
-        pio_sm_put(pioN, sm1N, clk_div1);
-        pio_sm_put(pioN, sm2N, clk_div2);
-        pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-        pio_sm_exec(pioN, sm2N, pio_encode_pull(false, false));
+        pio_sm_put(pioN_A, sm1N, clk_div1);
+        pio_sm_put(pioN_B, sm2N, clk_div2);
+        pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+        pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
         if (note_on_flag_flag[i]) {
           // pio_sm_exec(pioN, sm1N, pio_encode_out(pio_osr, 31));
           // pio_sm_exec(pioN, sm2N, pio_encode_out(pio_osr, 31));
@@ -659,20 +686,20 @@ void voice_task_debug() {
               // pwm_set_chan_level(RANGE_PWM_SLICES[(i * 2) + 1], pwm_gpio_to_channel(RANGE_PINS[(i * 2) + 1]), 1);
               // delayMicroseconds(6);
               // Serial.println("VOICE TASK 5c");
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(10 + offset[pioNumber]));  // OSC Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(10 + offset[pioNumber]));
+              pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+              pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
               // Serial.println("VOICE TASK 5d");
               //delayMicroseconds(periodA);
               break;
             case 2:
               // Serial.println("VOICE TASK 5e");
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(4 + offset[pioNumber]));  // OSC Half Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(12 + offset[pioNumber]));
+              pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(4 + offset[pioNumberA]));  // OSC Half Sync MODE
+              pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(12 + offset[pioNumberB]));
               break;
             case 3:
               // Serial.println("VOICE TASK 5f");
-              pio_sm_exec(pioN, sm1N, pio_encode_jmp(4 + offset[pioNumber]));  // OSC 3rd-quarter Sync MODE
-              pio_sm_exec(pioN, sm2N, pio_encode_jmp(10 + offset[pioNumber]));
+              pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(4 + offset[pioNumberA]));  // OSC 3rd-quarter Sync MODE
+              pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
               break;
             default:
               break;

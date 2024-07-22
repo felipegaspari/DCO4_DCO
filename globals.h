@@ -19,7 +19,7 @@ static const uint32_t sysClock_Hz = sysClock * 1000;
 static const uint16_t DIV_COUNTER = 10000;
 static const uint16_t DIV_COUNTER_PW = 1024;
 
-static const uint32_t pioPulseLength = 2800;
+static const uint32_t pioPulseLength = 4000;
 static const uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
 static const uint32_t eightPioPulseLength = pioPulseLength / 8;
 static const uint32_t correctionPioPulseLength = (pioPulseLength / 8) - (pioPulseLength / 500);
@@ -37,7 +37,8 @@ uint32_t loop1_microsLast;
 uint8_t NUM_VOICES = NUM_VOICES_TOTAL;
 uint8_t STACK_VOICES = 1;
 
-uint8_t voiceMode = 2;
+uint8_t voiceMode = 1;
+uint8_t syncMode = 0;
 uint8_t oscSync = 0;
 uint8_t polyMode = 1;
 
@@ -57,7 +58,7 @@ const float BASE_NOTE = 440.0f;
 
 const uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
 const uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
-const uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 1, 1, 1, 1, 0, 0, 0, 0 };
+const uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 0, 0, 0, 0, 1, 1, 1, 1 };
 const uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1, 2, 3 };
 
 const uint8_t PW_PINS[NUM_VOICES_TOTAL] = { 3, 2, 4, 5 };
@@ -86,7 +87,7 @@ uint8_t PW_PWM_SLICES[NUM_VOICES_TOTAL];
 uint16_t PW_CENTER[NUM_VOICES_TOTAL] = { 570, 552, 540, 553 };
 uint16_t PW_LOW_LIMIT[NUM_VOICES_TOTAL];
 uint16_t PW_HIGH_LIMIT[NUM_VOICES_TOTAL] = { DIV_COUNTER_PW, DIV_COUNTER_PW, DIV_COUNTER_PW, DIV_COUNTER_PW };
-uint16_t PW_LOOKUP[3] = { 0, (DIV_COUNTER_PW / 2) -1, DIV_COUNTER_PW - 1 };
+uint16_t PW_LOOKUP[3] = { 0, (DIV_COUNTER_PW / 2) - 1, DIV_COUNTER_PW - 1 };
 uint16_t PW_PWM[NUM_VOICES_TOTAL];
 
 uint32_t VOICES[NUM_VOICES_TOTAL];

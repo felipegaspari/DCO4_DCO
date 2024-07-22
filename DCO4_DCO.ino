@@ -160,6 +160,7 @@ millisTimer();
       memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);
 
       loop1_microsLast = loop1_micros;
+      
     }
 
     // loop speed
