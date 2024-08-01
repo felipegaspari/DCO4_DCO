@@ -3,15 +3,15 @@
 
 #include <lfo.h>  // required for function generation
 
-//static const uint16_t PWM_CC = 4096;
-static const uint16_t LFO1_CC = 1000;
-static const uint16_t LFO1_CC_HALF = LFO1_CC / 2;
-static const uint16_t LF01_CC_THIRD = LFO1_CC / 3;
-static const uint16_t LFO2_CC = 1024;
-static const uint16_t LFO2_CC_HALF = LFO2_CC / 2;
+//static constexpr uint16_t PWM_CC = 4096;
+static constexpr uint16_t LFO1_CC = 1000;
+static constexpr uint16_t LFO1_CC_HALF = LFO1_CC / 2;
+static constexpr uint16_t LF01_CC_THIRD = LFO1_CC / 3;
+static constexpr uint16_t LFO2_CC = 1024;
+static constexpr uint16_t LFO2_CC_HALF = LFO2_CC / 2;
 
-static const uint16_t LFO_DRIFT_CC = 1000;
-static const uint16_t LFO_DRIFT_CC_HALF = LFO_DRIFT_CC / 2;
+static constexpr uint16_t LFO_DRIFT_CC = 1000;
+static constexpr uint16_t LFO_DRIFT_CC_HALF = LFO_DRIFT_CC / 2;
 
 //////////////// LFO ian ////////////////////////////////////////
 

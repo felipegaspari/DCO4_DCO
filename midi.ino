@@ -1,3 +1,4 @@
+
 void init_midi() {
   MIDI_USB.begin(MIDI_CHANNEL_OMNI);
   MIDI_USB.setHandleNoteOn(handleNoteOn);
@@ -104,10 +105,8 @@ void note_on(uint8_t note, uint8_t velocity) {
       }
       break;
   }
-
-
   last_midi_pitch_bend = 0;
-  //voice_task(); // Only if ran on the same core
+
 }
 
 void note_off(uint8_t note) {

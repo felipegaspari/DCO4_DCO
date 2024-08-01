@@ -1,12 +1,58 @@
 #ifndef __AMP_COMP_H__
 #define __AMP_COMP_H__
 
-//#if ENABLE_FS_CALIBRATION
+#include "include_all.h"
 
-int_fast32_t freq_to_amp_comp_array[ 352 ];
+static constexpr int ampCompTableSize = 22;
+
+int32_t freq_to_amp_comp_array[352];
 uint8_t ampCompArraySize = FSVoiceDataSize / 4;
 
-// #else 
+// Arrays to store the precomputed coefficients
+float aCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
+float bCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
+float cCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
+
+int32_t ampCompFrequencyArray[NUM_OSCILLATORS][ampCompTableSize];
+int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize];
+
+ //void initAmplitudeCompensation() {
+// //   ampCompFrequencyArray[j][0] = 0;
+// //   ampCompFrequencyArray[j][1] = sNotePitches[manual_DCO_calibration_start_note - 12] * 100;
+// for (int j = 0; j < NUM_OSCILLATORS; j++) {
+    
+
+//   for (int i = 0; i < 22; i++) {
+//     ampCompFrequencyArray[j][i] = sNotePitches[manual_DCO_calibration_start_note + ((i - 1) * calibration_note_interval) - 12] * 100;
+//   }
+//   // for (int i = 0; i < NUM_OSCILLATORS; i++) {
+//   //   ampCompArray[i][0] = 0;
+//   //   ampCompArray[i][1] = initManualAmpCompCalibrationVal;
+//   // }
+//     }
+// }
+
+// Function to precompute the coefficients
+void precomputeCoefficients() {
+  for (int j = 0; j < NUM_OSCILLATORS; j++) {
+    for (int i = 0; i < ampCompTableSize - 2; i++) {
+      long x0 = ampCompFrequencyArray[j][i];
+      long x1 = ampCompFrequencyArray[j][i + 1];
+      long x2 = ampCompFrequencyArray[j][i + 2];
+      long y0 = ampCompArray[j][i];
+      long y1 = ampCompArray[j][i + 1];
+      long y2 = ampCompArray[j][i + 2];
+
+      // Calculate the coefficients of the quadratic polynomial
+      aCoeff[j][i] = (float)(y2 - (x2 * (y1 - y0) + x1 * y0 - x0 * y1) / (x1 - x0)) / (x2 * (x2 - x1 - x0) + x1 * x0);
+      bCoeff[j][i] = (float)(y1 - y0 - aCoeff[j][i] * (x1 * x1 - x0 * x0)) / (x1 - x0);
+      cCoeff[j][i] = y0 - aCoeff[j][i] * x0 * x0 - bCoeff[j][i] * x0;
+    }
+  }
+}
+
+
+// #else
 
 // uint_fast32_t freq_to_amp_comp_array[] = {
 // 0,0,
@@ -34,7 +80,7 @@ uint8_t ampCompArraySize = FSVoiceDataSize / 4;
 // 20000000,10000,
 // };
 // uint8_t ampCompArraySize = sizeof(freq_to_amp_comp_array);
- //#endif
+// #endif
 
 // float freq_to_amp_comp_array_float[] = {
 // 18.35, 0,
@@ -130,7 +176,7 @@ uint8_t ampCompArraySize = FSVoiceDataSize / 4;
 // 2093.00, 7826,	// C7
 // 4186.00, 8910,	// C8
 // 8372.01, 9999,	// C9
-// 30000.00, 9999,	
+// 30000.00, 9999,
 // };
 
 #endif

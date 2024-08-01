@@ -1,10 +1,14 @@
 #ifndef __AUTOTUNE_H__
 #define __AUTOTUNE_H__
 
-bool autotuneOnFlag;
-bool manualTuneOnFlag;
-bool firstTuneFlag;
+#include "include_all.h"
 
+bool calibrationFlag = false;
+bool manualCalibrationFlag = false;
+bool firstTuneFlag = false;
+
+uint8_t manualCalibrationStage;
+int8_t manualCalibrationOffset[NUM_OSCILLATORS] = {0,0,0,0,0,0,0,0};
 /************************************************/
 /****************** DCO calibration ******************/
 
@@ -22,7 +26,9 @@ unsigned long DCOCalibrationStart;
 bool DCO_calibration_lastVal = 0;
 
 volatile uint16_t ampCompCalibrationVal;
-volatile uint16_t initManualAmpCompCalibrationVal = 50;
+volatile int8_t initManualAmpCompCalibrationValPreset = 25;
+volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {24,26,25,25,25,18,20,25};
+volatile uint16_t ampCompLowestFreqVal = 10;
 
 
 int pulseCounter = 0;
@@ -33,8 +39,10 @@ uint8_t DCO_calibration_avg1_counter, DCO_calibration_avg2_counter;
 
 uint16_t samplesNumber;
 
-const uint8_t DCO_calibration_start_note = 29;
-const uint8_t manual_DCO_calibration_start_note = DCO_calibration_start_note - 5;
+
+static constexpr uint8_t DCO_calibration_start_note = 23;
+static constexpr uint8_t calibration_note_interval = 5;
+static constexpr uint8_t manual_DCO_calibration_start_note = DCO_calibration_start_note - 5;
 
 uint8_t DCO_calibration_current_note;
 uint8_t DCO_calibration_current_voice;
@@ -42,9 +50,9 @@ uint8_t DCO_calibration_current_OSC;
 
 uint8_t highestNoteOSC[NUM_OSCILLATORS];
 
-int16_t lastDCODifference;
+double lastDCODifference;
 uint8_t lastGapFlipCount;
-uint16_t lastPIDgap;
+double lastPIDgap;
 uint16_t lastampCompCalibrationVal;
 
 uint16_t PWCalibrationVal;

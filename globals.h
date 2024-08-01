@@ -2,8 +2,11 @@
 #ifndef __GLOBALS_H__
 #define __GLOBALS_H__
 
+//#include "include_all.h"
+
 #define NUM_VOICES_TOTAL 4
 #define NUM_OSCILLATORS NUM_VOICES_TOTAL * 2
+
 #define MIDI_CHANNEL 1
 //#define USE_ADC_STACK_VOICES // gpio 28 (adc 2)
 //#define USE_ADC_DETUNE       // gpio 27 (adc 1)
@@ -13,20 +16,22 @@
 #define MISO 4
 #define CS 5
 
-static const uint32_t sysClock = 225000;
-static const uint32_t sysClock_Hz = sysClock * 1000;
+#define ENABLE_FS_CALIBRATION
 
-static const uint16_t DIV_COUNTER = 10000;
-static const uint16_t DIV_COUNTER_PW = 1024;
+static constexpr uint32_t sysClock = 225000;
+static constexpr uint32_t sysClock_Hz = sysClock * 1000;
 
-static const uint32_t pioPulseLength = 4000;
-static const uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
-static const uint32_t eightPioPulseLength = pioPulseLength / 8;
-static const uint32_t correctionPioPulseLength = (pioPulseLength / 8) - (pioPulseLength / 500);
+static constexpr uint16_t DIV_COUNTER = 10000;
+static constexpr uint16_t DIV_COUNTER_PW = 1024;
 
-static const float halfSysClock_Hz = sysClock_Hz / 2;
-static const float eightSysClock_Hz = sysClock_Hz / 8;
-static const float eightSysClockMinusPulseLength_Hz = (double)(sysClock_Hz - pioPulseLength - 8) / (double)8;
+static constexpr uint32_t pioPulseLength = 4000;
+static constexpr uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
+static constexpr uint32_t eightPioPulseLength = pioPulseLength / 8;
+static constexpr uint32_t correctionPioPulseLength = (pioPulseLength / 8) - (pioPulseLength / 500);
+
+static constexpr float halfSysClock_Hz = sysClock_Hz / 2;
+static constexpr float eightSysClock_Hz = sysClock_Hz / 8;
+static constexpr float eightSysClockMinusPulseLength_Hz = (double)(sysClock_Hz - pioPulseLength - 8) / (double)8;
 
 
 uint32_t loop0_micros;
@@ -54,31 +59,31 @@ volatile float DETUNE_INTERNAL2 = 1;
 uint32_t DETUNE_INTERNAL_FIFO = 1;
 float DETUNE_INTERNAL_FIFO_float = 1;
 uint32_t* a = &DETUNE_INTERNAL_FIFO;
-const float BASE_NOTE = 440.0f;
+float BASE_NOTE = 440.0f;
 
-const uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
-const uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
-const uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 0, 0, 0, 0, 1, 1, 1, 1 };
-const uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1, 2, 3 };
+static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
+static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
+static constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 0, 0, 0, 0, 1, 1, 1, 1 };
+static constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1, 2, 3 };
 
-const uint8_t PW_PINS[NUM_VOICES_TOTAL] = { 3, 2, 4, 5 };
+static constexpr uint8_t PW_PINS[NUM_VOICES_TOTAL] = { 3, 2, 4, 5 };
 
-const int DCO_calibration_pin = 10;
+static constexpr int DCO_calibration_pin = 10;
 
-// const uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 17, /*15, 13, 10, 8*/ };
-// const uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 18, 16/*, 14, 11, 9, 7*/ };
-// const uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 1, 1, 1, 1/*, 0, 0, 0, 0*/ };
-// const uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3/*, 0, 1, 2, 3*/ };
+// constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 17, /*15, 13, 10, 8*/ };
+// constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 18, 16/*, 14, 11, 9, 7*/ };
+// constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 1, 1, 1, 1/*, 0, 0, 0, 0*/ };
+// constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3/*, 0, 1, 2, 3*/ };
 
-// const uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { /*29, 27, 19, 17, */15, 13, 10, 8 };
-// const uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { /*28, 22, 18, 16,*/ 14, 11, 9, 7 };
-// const uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { /*1, 1, 1, 1,*/ 0, 0, 0, 0 };
-// const uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { /*0, 1, 2, 3,*/ 0, 1, 2, 3 };
+// constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { /*29, 27, 19, 17, */15, 13, 10, 8 };
+// constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { /*28, 22, 18, 16,*/ 14, 11, 9, 7 };
+// constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { /*1, 1, 1, 1,*/ 0, 0, 0, 0 };
+// constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { /*0, 1, 2, 3,*/ 0, 1, 2, 3 };
 
-// const uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 17, /* 15, 13,*/ 10, 8 };
-// const uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 18, 16, /* 14, 11,*/ 9, 7 };
-// const uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 1, 1, 1, 1, 0, 0 /*, 0, 0 */ };
-// const uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1 /*, 2, 3 */ };
+// constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 17, /* 15, 13,*/ 10, 8 };
+// constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 18, 16, /* 14, 11,*/ 9, 7 };
+// constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 1, 1, 1, 1, 0, 0 /*, 0, 0 */ };
+// constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1 /*, 2, 3 */ };
 
 uint8_t RANGE_PWM_SLICES[NUM_VOICES_TOTAL * 2];
 uint8_t VCO_PWM_SLICES[NUM_VOICES_TOTAL * 2];

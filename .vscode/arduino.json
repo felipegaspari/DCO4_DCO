@@ -1,0 +1,6 @@
+{
+    "configuration": "flash=2097152_131072,freq=225,opt=Optimize3,rtti=Disabled,stackprotect=Disabled,exceptions=Disabled,dbgport=Disabled,dbglvl=None,usbstack=tinyusb,ipbtstack=ipv4only,uploadmethod=default",
+    "board": "rp2040:rp2040:rpipico",
+    "port": "/dev/ttyACM0",
+    "sketch": "DCO4_DCO.ino"
+}

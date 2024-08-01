@@ -13,7 +13,7 @@ void init_serial() {
   Serial2.setTX(20);
   Serial2.begin(2500000);
 
- // Serial.begin(2000000);
+  Serial.begin(2000000);
 }
 
 void serial_STM32_task() {
@@ -23,16 +23,16 @@ void serial_STM32_task() {
     char commandCharacter = Serial2.read();
     //Serial.println((char)commandCharacter);
     switch (commandCharacter) {
-      // case 'v':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     Serial2.readBytes(dataArray, 4);
-      //     ((uint8_t *)&LFOMultiplier)[0] = dataArray[0];
-      //     ((uint8_t *)&LFOMultiplier)[1] = dataArray[1];
-      //     ((uint8_t *)&LFOMultiplier)[2] = dataArray[2];
-      //     ((uint8_t *)&LFOMultiplier)[3] = dataArray[3];
-      //     break;
-      //  }
+        // case 'v':
+        //   {
+        //     while (Serial2.available() < 1) {}
+        //     Serial2.readBytes(dataArray, 4);
+        //     ((uint8_t *)&LFOMultiplier)[0] = dataArray[0];
+        //     ((uint8_t *)&LFOMultiplier)[1] = dataArray[1];
+        //     ((uint8_t *)&LFOMultiplier)[2] = dataArray[2];
+        //     ((uint8_t *)&LFOMultiplier)[3] = dataArray[3];
+        //     break;
+        //  }
         // case 'b':
         //   {
         //     while (Serial2.available() < 1) {}
@@ -180,7 +180,7 @@ void serial_STM32_task() {
           PW[0] = DIV_COUNTER_PW - (PW[0] / 4);
           break;
         }
-            case 's':
+      case 's':
         {
           while (Serial2.available() < 1) {}
           Serial2.readBytes(dataArray, 4);
@@ -225,7 +225,7 @@ void serial_STM32_task() {
 
           break;
         }
-        
+
       case 'w':
         {
           byte paramBytes[2];
@@ -240,6 +240,29 @@ void serial_STM32_task() {
           int16_t paramValue = paramBytes[1];
 
           update_parameters(paramNumber, (uint16_t)paramValue);
+          break;
+        }
+      case 'x':
+        {
+          byte paramBytes[5];
+          byte paramValueArray[4];
+          byte finishByte = 1;
+          byte readByte = 0;
+          int32_t paramValue;
+
+          while (Serial2.available() < 1) {}
+
+          Serial2.readBytes(paramBytes, 5);
+
+          uint8_t paramNumber = paramBytes[0];
+          paramValueArray[0] = paramBytes[1];
+          paramValueArray[1] = paramBytes[2];
+          paramValueArray[2] = paramBytes[3];
+          paramValueArray[3] = paramBytes[4];
+
+          memcpy(&paramValue, paramValueArray, 4);
+
+          update_parameters(paramNumber, paramValue);
           break;
         }
     }
@@ -280,6 +303,16 @@ void serial_send_generaldata(uint16_t data) {
     //uart_putc(uart1, 'z');
     return;
   }
+}
+
+void serialSendParam32(byte paramNumber, uint32_t paramValue) {
+
+  uint8_t *b = (uint8_t *)&paramValue;
+  byte finishByte = 1;
+
+  byte bytesArray[7] = { (uint8_t)'x', paramNumber, b[0], b[1], b[2], b[3], finishByte };
+  while (Serial2.availableForWrite() < 1) {}
+  Serial2.write(bytesArray, 7);
 }
 
 void serial_send_freq(float f) {

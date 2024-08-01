@@ -10,7 +10,7 @@ byte noteEnd[NUM_VOICES_TOTAL];
 
 uint16_t ADSR1Level[NUM_VOICES_TOTAL];
 
-static const uint16_t ADSR_1_CC = 4096;
+static constexpr uint16_t ADSR_1_CC = 4096;
 
 float ADSRMaxLevel = ADSR_1_CC;
 

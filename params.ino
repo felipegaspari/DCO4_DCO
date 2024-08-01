@@ -140,7 +140,20 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
       //= paramValue " FUNCTION KEY";
       break;
 
-
+    case 150:
+        calibrationFlag = paramValue;
+      break;
+    case 151:
+        manualCalibrationFlag = paramValue;
+        calibrationFlag = paramValue;
+      break;
+    case 152:
+        manualCalibrationStage = (int8_t)paramValue;
+        break;
+    case 153:
+        manualCalibrationOffset[manualCalibrationStage / 2] = (int8_t)paramValue;
+        initManualAmpCompCalibrationVal[manualCalibrationStage / 2] = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
+        break;
       // case 101:
       //   = paramValue " CALIB MODE";
       //   break;

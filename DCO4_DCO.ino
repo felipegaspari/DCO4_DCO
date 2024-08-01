@@ -42,7 +42,20 @@
 
 // #include "irq_tuner.h"
 
-#define ENABLE_FS_CALIBRATION
+//#define RUNNING_AVERAGE
+
+#ifdef RUNNING_AVERAGE
+#include "RunningAverage.h"
+RunningAverage myRA(2000);
+/* USAGE:
+unsigned long a;
+unsigned long b;
+a = micros();
+b = micros();
+myRA.addValue(b - a);
+Serial.println(myRA.getAverage());
+*/
+#endif
 
 // ****************************************************************************************** //
 
@@ -53,7 +66,7 @@ void setup() {
   init_midi();
 
   init_LFOs();
- init_DRIFT_LFOs();
+  init_DRIFT_LFOs();
 
   // init_tuner();
   // init_tuning_tables();
@@ -75,6 +88,7 @@ void setup() {
 }
 
 void setup1() {
+
   //set_sys_clock_khz(sysClock, true);
   init_pwm();
   init_pio();
@@ -83,15 +97,16 @@ void setup1() {
   init_PID();
 
   init_FS();
+  //initAmplitudeCompensation();
+  precomputeCoefficients();
 
-  autotuneOnFlag = false;
-  manualTuneOnFlag = false;
+  calibrationFlag = false;
+  manualCalibrationFlag = false;
   firstTuneFlag = true;
-  ampCompCalibrationVal = initManualAmpCompCalibrationVal;
 
-  if (autotuneOnFlag == true) {
+  if (calibrationFlag == true) {
     init_DCO_calibration();
-    voice_task_autotune(0);
+    voice_task_autotune(0, ampCompCalibrationVal);
   }
 }
 
@@ -109,7 +124,7 @@ void loop() {
     LFO1();
     LFO2();
     DRIFT_LFOs();
-    
+
 
     // uint32_t a = micros();
     uint32_t fbits = 0;
@@ -130,22 +145,20 @@ void loop1() {
   // unsigned long loop1_start_time = micros();
   // unsigned long loop1_total_time;
 
-millisTimer();
+  millisTimer();
 
-  if (autotuneOnFlag == true) {
+  if (calibrationFlag == true) {
     // Manual tuning :VOICE_NOTES[0] = DCO_calibration_start_note - 5;
 
-    if (manualTuneOnFlag == true) {
+    if (manualCalibrationFlag == true) {
       VOICE_NOTES[0] = manual_DCO_calibration_start_note;
       // VOICE_NOTES[0] = 59;
-      ampCompCalibrationVal = initManualAmpCompCalibrationVal;
-      voice_task_autotune(0);
+      ampCompCalibrationVal = initManualAmpCompCalibrationVal[0];
+      voice_task_autotune(0, ampCompCalibrationVal);
       DCO_calibration_debug();
       Serial.println((String) "PW value: " + (PW[0] / 4));
 
     } else {
-      voice_task_autotune(0);
-      delay(1);
       DCO_calibration();
     }
   } else {
@@ -154,13 +167,12 @@ millisTimer();
     loop1_micros = micros();
 
     if ((loop1_micros - loop1_microsLast) > 100) {
-      
+
       ADSR_update();
       rp2040.fifo.pop_nb(a);
       memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);
 
       loop1_microsLast = loop1_micros;
-      
     }
 
     // loop speed
