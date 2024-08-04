@@ -507,37 +507,66 @@ uint16_t logarithmicInterpolation(float x0, float y0, float x1, float y1, float 
   return (uint16_t)round(y);
 }
 
+float logarithmicInterpolationFloat(float x0, float y0, float x1, float y1, float x) {
+  // Ensure x0 and x1 are not zero or negative to avoid log(0) or log of negative number
+  if (x0 <= 0 || x1 <= 0) {
+    return 0;  // or handle the error as needed
+  }
 
-//     float left = PIDLowerLimit;
-//     float right = PIDUpperLimit;
+  // Calculate the constants a and b
+  float a = (y1 - y0) / (logf(x1) - logf(x0));
+  float b = y0 - a * logf(x0);
 
-//     while ((right - left) > 1000) {
-//         PIDOutput = (left + right) / 2.0;
-//          voice_task_autotune(1, ampCompCalibrationVal);
-//          delay(100);
-//         float result = find_gap(2);
+  // Calculate the y value at the given x
+  float y = a * logf(x) + b;
 
-//         if (result == 1.16999f) {
-//             // If the midpoint is invalid, adjust the search range
+  return y;
+}
 
-//         PIDOutput = (left + PIDOutput) / 2.0;
-//         voice_task_autotune(1, ampCompCalibrationVal);
-//          delay(100);
-//          float secondResult = find_gap(2);
-//             if (secondResult != 1.16999f) {
-//                 right = PIDOutput;
-//             } else {
-//                 left = PIDOutput;
-//             }
-//         } else {
-//             // If the midpoint is valid, adjust the search range to narrow down the center
-//             if (result < 0) {
-//                 left = PIDOutput;
-//             } else {
-//                 right = PIDOutput;
-//             }
-//         }
-//     }
+double logarithmicInterpolationDouble(double x0, double y0, double x1, double y1, double x) {
+  // Ensure x0 and x1 are not zero or negative to avoid log(0) or log of negative number
+  if (x0 <= 0 || x1 <= 0) {
+    return 0;  // or handle the error as needed
+  }
 
-// //    return (left + right) / 2.0;
-//      myPID.SetOutputLimits(left, right);
+  // Calculate the constants a and b
+  double a = (y1 - y0) / (logf(x1) - logf(x0));
+  double b = y0 - a * logf(x0);
+
+  // Calculate the y value at the given x
+  double y = a * logf(x) + b;
+
+  return y;
+}
+
+float linearInterpolation(float x0, float y0, float x1, float y1, float x) {
+  // Ensure x0 and x1 are not the same to avoid division by zero
+  if (x0 == x1) {
+    return 0;  // or handle the error as needed
+  }
+
+  // Calculate the slope (m) of the line
+  float m = (y1 - y0) / (x1 - x0);
+
+  // Calculate the y-intercept (b) of the line
+  float b = y0 - m * x0;
+
+  // Calculate the y value at the given x
+  float y = m * x + b;
+
+  return y;
+}
+
+double expInterpolationSolveY(double x, double x0, double x1, double y0, double y1) {
+    if (x0 <= 0 || x1 <= 0) {
+        // Handle error: x0 and x1 must be greater than 0 for exponential interpolation
+        return NAN;
+    }
+
+    double log_y0 = log(y0);
+    double log_y1 = log(y1);
+
+    double log_y = log_y0 + (log_y1 - log_y0) * (x - x0) / (x1 - x0);
+
+    return exp(log_y);
+}

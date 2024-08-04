@@ -29,6 +29,7 @@
                 "/home/felipe/Arduino/libraries/lfo-main",
                 "/home/felipe/Arduino/libraries/adsr-main",
                 "/home/felipe/Arduino/libraries/PID",
+                "/home/felipe/Arduino/libraries/RunningAverage",
                 "/home/felipe/.arduino15/packages/rp2040/tools/pqt-gcc/2.2.0-d04e724/arm-none-eabi/include/c++/12.3.0",
                 "/home/felipe/.arduino15/packages/rp2040/tools/pqt-gcc/2.2.0-d04e724/arm-none-eabi/include/c++/12.3.0/arm-none-eabi/thumb",
                 "/home/felipe/.arduino15/packages/rp2040/tools/pqt-gcc/2.2.0-d04e724/arm-none-eabi/include/c++/12.3.0/backward",

@@ -19,6 +19,16 @@ float portamento_cur_freq[NUM_VOICES_TOTAL * 2];
 
 uint8_t highestNote = 124;
 
+bool sqr1Status;
+
+static const int multiplierTableSize = 200;
+const int32_t multiplierTableScale = 10000;
+
+int32_t xMultiplierTable[multiplierTableSize];
+int32_t yMultiplierTable[multiplierTableSize];
+
+static const uint16_t maxFrequency = 4000;
+
 // uint8_t note1[NUM_VOICES];
 // uint8_t note2[NUM_VOICES];
 

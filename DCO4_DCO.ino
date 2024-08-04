@@ -42,7 +42,7 @@
 
 // #include "irq_tuner.h"
 
-//#define RUNNING_AVERAGE
+#define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"
@@ -144,15 +144,15 @@ void loop() {
 void loop1() {
   // unsigned long loop1_start_time = micros();
   // unsigned long loop1_total_time;
+      // unsigned long a;
+      // unsigned long b;
+      // a = micros();
 
   millisTimer();
 
   if (calibrationFlag == true) {
-    // Manual tuning :VOICE_NOTES[0] = DCO_calibration_start_note - 5;
-
     if (manualCalibrationFlag == true) {
       VOICE_NOTES[0] = manual_DCO_calibration_start_note;
-      // VOICE_NOTES[0] = 59;
       ampCompCalibrationVal = initManualAmpCompCalibrationVal[0];
       voice_task_autotune(0, ampCompCalibrationVal);
       DCO_calibration_debug();
@@ -169,7 +169,7 @@ void loop1() {
     if ((loop1_micros - loop1_microsLast) > 100) {
 
       ADSR_update();
-      rp2040.fifo.pop_nb(a);
+      rp2040.fifo.pop_nb(detune_fifo_variable);
       memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);
 
       loop1_microsLast = loop1_micros;
@@ -188,4 +188,8 @@ void loop1() {
     //  }
     // Serial.println("loop1");
   }
+
+      //   b = micros();
+      // myRA.addValue(b - a);
+      // Serial.println(myRA.getAverage());
 }

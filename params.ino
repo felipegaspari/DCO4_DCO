@@ -1,6 +1,9 @@
 void update_parameters(byte paramNumber, int16_t paramValue) {
   switch (paramNumber) {
-
+    case 5:
+      sqr1Status = paramValue;
+      //update_waveSelector(4);
+      break;
     case 10:
       ADSR3ToOscSelect = paramValue;
       break;

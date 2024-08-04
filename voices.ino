@@ -5,6 +5,7 @@ void init_voices() {
     VOICE_NOTES[i] = DCO_calibration_start_note;
   }
 
+  initMultiplierTables();
   setVoiceMode();
   voice_task();
 }
@@ -19,6 +20,17 @@ void voice_task() {
 
   // Serial.println("VOICE TASK 1");
 
+  float calcPitchbend;
+
+  if (midi_pitch_bend == 8192) {
+    calcPitchbend = 0.0f;
+  } else {
+    if (midi_pitch_bend < 8192) {
+      calcPitchbend = ((float)midi_pitch_bend / 8190.99f) - 1.0f;
+    } else {
+      calcPitchbend = ((float)midi_pitch_bend / 8192.99f) - 1.0f;
+    }
+  }
 
   last_midi_pitch_bend = midi_pitch_bend;
   LAST_DETUNE = DETUNE;
@@ -161,15 +173,27 @@ void voice_task() {
       float DETUNE_DRIFT_OSC1 = (analogDrift != 0) ? (LFO_DRIFT_LEVEL[DCO_A] * 0.0000005f * analogDrift) : 0;
       float DETUNE_DRIFT_OSC2 = (analogDrift != 0) ? (LFO_DRIFT_LEVEL[DCO_B] * 0.0000005f * analogDrift) : 0;
 
-      /*   Este bloque tarda 10 microsegundos */
+      /*   Este bloque tardaba 10 microsegundos */
 
-      float calcPitchbend = (0x2000 - midi_pitch_bend) / 67000;
-      float modifiersAll = DETUNE_INTERNAL_FIFO_float + unisonMODIFIER + 1;
+      float modifiersAll = DETUNE_INTERNAL_FIFO_float + unisonMODIFIER + calcPitchbend + 1.00001f;
       float freqModifiers = ADSRModifierOSC1 + DETUNE_DRIFT_OSC1 + modifiersAll;
-      float freq2Modifiers = (ADSRModifierOSC2 + DETUNE_DRIFT_OSC2 + modifiersAll) * OSC2_detune;
+      float freq2Modifiers = (ADSRModifierOSC2 + DETUNE_DRIFT_OSC2 + modifiersAll);
 
-      freq = (freq * freqModifiers) - (freq * calcPitchbend);
-      freq2 = (freq2 * freq2Modifiers) - (freq2 * calcPitchbend);
+      freq = freq * (float)((float)interpolatePitchMultiplier(freqModifiers) / (float)multiplierTableScale);
+      freq2 = freq2 * OSC2_detune * (float)((float)interpolatePitchMultiplier(freq2Modifiers) / (float)multiplierTableScale);
+
+      if ((uint16_t)freq > maxFrequency) {
+        freq = maxFrequency;
+      } else if ((uint16_t)freq < 6) {
+        freq = 6;
+      }
+      if ((uint16_t)freq2 >= maxFrequency) {
+        freq2 = maxFrequency;
+      } else if ((uint16_t)freq2 < 6) {
+        freq2 = 6;
+      }
+      
+
 
       /* FIN */
 
@@ -251,10 +275,13 @@ void voice_task() {
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
 
-        PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - ((float)LFO2Level * LFO2toPWM_formula) - PW[0]), 0, DIV_COUNTER_PW - 1);
-        //PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
-        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[0], i));
-
+        if (sqr1Status) {
+          PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - ((float)LFO2Level * LFO2toPWM_formula) - PW[0]), 0, DIV_COUNTER_PW - 1);
+          //PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
+          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[0], i));
+        } else {
+          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
+        }
         // Serial.println("VOICE TASK 13");
         // pwm_set_chan_level(VCO_PWM_SLICES[0], pwm_gpio_to_channel(22), (uint16_t)(vcoLevel)); // VCO control
       }
@@ -684,5 +711,66 @@ void voice_task_debug() {
       }
     }
     note_on_flag_flag[i] = false;
+  }
+}
+
+inline int32_t interpolatePitchMultiplier(float x_float) {
+  int32_t x = (int32_t)(x_float * (float)multiplierTableScale);
+    // Check if x is out of bounds
+    if (x <= xMultiplierTable[0]) {
+        return yMultiplierTable[0];
+    }
+    if (x >= xMultiplierTable[multiplierTableSize - 1]) {
+        return yMultiplierTable[multiplierTableSize - 1];
+    }
+
+    // Binary search to find the interval
+    int low = 0;
+    int high = multiplierTableSize - 1;
+    while (low <= high) {
+        int mid = (low + high) / 2;
+        if (xMultiplierTable[mid] <= x && x < xMultiplierTable[mid + 1]) {
+            low = mid;
+            break;
+        } else if (x < xMultiplierTable[mid]) {
+            high = mid - 1;
+        } else {
+            low = mid + 1;
+        }
+    }
+
+    // Perform linear interpolation using fixed-point arithmetic
+    int32_t x0 = xMultiplierTable[low];
+    int32_t x1 = xMultiplierTable[low + 1];
+    int32_t y0 = yMultiplierTable[low];
+    int32_t y1 = yMultiplierTable[low + 1];
+
+    int32_t y = y0 + ((y1 - y0) * (x - x0) / (x1 - x0));
+    return y;
+}
+
+void initMultiplierTables() {
+
+  float y_value;
+  double divisor = multiplierTableSize;
+  double fraction = 4.00d / divisor;
+
+  for (int i = 0; i < multiplierTableSize; i++) {
+    double x;
+
+    if (i == 0) {
+      x = -1.00d;
+      y_value = 0.25d;
+    } else if (i == multiplierTableSize - 1) {
+      x = 3 ;
+      y_value = 4;
+    } else {
+      x = (-1.00d + (fraction * (double)i));
+
+      y_value = (expInterpolationSolveY(x + 1.00d, 1.00d, 3.00d, 0.50d, 2.00d));
+    }
+
+    xMultiplierTable[i] = (int32_t)(x * (double)multiplierTableScale);
+    yMultiplierTable[i] = (int32_t)(y_value * (double)multiplierTableScale);
   }
 }

@@ -5,6 +5,7 @@ void init_midi() {
   MIDI_USB.setHandleNoteOff(handleNoteOff);
   MIDI_USB.setHandleControlChange(handleControlChange);
   MIDI_USB.setHandleProgramChange(handleProgramChange);
+  MIDI_USB.setHandlePitchBend(handlePitchBend);
 
 
   MIDI_SERIAL.begin(MIDI_CHANNEL_OMNI);
@@ -12,6 +13,7 @@ void init_midi() {
   MIDI_SERIAL.setHandleNoteOff(handleNoteOff);
   MIDI_SERIAL.setHandleControlChange(handleControlChange);
   MIDI_SERIAL.setHandleProgramChange(handleProgramChange);
+  MIDI_SERIAL.setHandlePitchBend(handlePitchBend);
 }
 
 
@@ -26,6 +28,10 @@ void handleControlChange(byte channel, byte number, byte value) {
 }
 
 void handleProgramChange(byte channel, byte program) {
+}
+
+void handlePitchBend(byte channel, int pitchBend) {
+midi_pitch_bend = pitchBend + 8192;
 }
 
 void note_on(uint8_t note, uint8_t velocity) {
