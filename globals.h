@@ -107,6 +107,8 @@ PIO pio[2] = { pio0, pio1 };
 
 uint8_t midi_serial_status = 0;
 int midi_pitch_bend = 8192, last_midi_pitch_bend = 8192;
+uint8_t pitchBendRange = 2;
+float pitchBendMultiplier = 1.00f / 12.00f * (float)pitchBendRange;
 
 uint16_t raw;
 
@@ -132,7 +134,7 @@ uint16_t dato_serial;
 float dato_serial_float;
 uint8_t OSC1_interval = 24;
 uint8_t OSC2_serial_detune = 127;
-uint8_t OSC2_interval = 24;
+uint8_t OSC2_interval = 36;
 float OSC2_detune = 127;
 uint16_t OSC2DetuneVal = 256;
 

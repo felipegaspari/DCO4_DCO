@@ -26,9 +26,9 @@ void voice_task() {
     calcPitchbend = 0.0f;
   } else {
     if (midi_pitch_bend < 8192) {
-      calcPitchbend = ((float)midi_pitch_bend / 8190.99f) - 1.0f;
+      calcPitchbend = (((float)midi_pitch_bend / 8190.99f) - 1.0f) * pitchBendMultiplier;
     } else {
-      calcPitchbend = ((float)midi_pitch_bend / 8192.99f) - 1.0f;
+      calcPitchbend = (((float)midi_pitch_bend / 8192.99f) - 1.0f) * pitchBendMultiplier;
     }
   }
 
@@ -47,7 +47,7 @@ void voice_task() {
       if (note1 > highestNote) {
         note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
       }
-      uint8_t note2 = note1 - 24 + OSC2_interval;
+      uint8_t note2 = note1 - 36 + OSC2_interval;
       if (note2 > highestNote) {
         note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
       }
@@ -638,7 +638,7 @@ void voice_task_debug() {
       if (note1 > highestNote) {
         note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
       }
-      uint8_t note2 = note1 - 24 + OSC2_interval;
+      uint8_t note2 = note1 - 36 + OSC2_interval;
       if (note2 > highestNote) {
         note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
       }

@@ -2,7 +2,7 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
   switch (paramNumber) {
     case 5:
       sqr1Status = paramValue;
-      //update_waveSelector(4);
+      // update_waveSelector(4);
       break;
     case 10:
       ADSR3ToOscSelect = paramValue;
@@ -11,11 +11,13 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
     case 11:
       LFO1Waveform = paramValue;
       LFO1_class.setWaveForm(LFO1Waveform);
+      LFO1_class.setMode0Freq((float)LFO1Speed, micros());
       break;
 
     case 12:
       LFO2Waveform = paramValue;
       LFO2_class.setWaveForm(LFO2Waveform);
+      LFO2_class.setMode0Freq((float)LFO2Speed, micros());
       break;
 
     case 13:
@@ -74,7 +76,6 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
         LFO_DRIFT_CLASS[i].setMode0Freq(LFO_DRIFT_SPEED_OFFSET[i], micros());
       }
       break;
-
     case 30:
       analogDriftSpread = paramValue;
       for (int i = 0; i < NUM_OSCILLATORS; i++) {
@@ -82,11 +83,10 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
         LFO_DRIFT_CLASS[i].setMode0Freq(LFO_DRIFT_SPEED_OFFSET[i], micros());
       }
       break;
-
     case 31:
       syncMode = paramValue;
       setSyncMode();
-
+      break;
     case 40:
       LFO1toDCOVal = paramValue;
       LFO1toDCO = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000;
@@ -144,19 +144,19 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
 
     case 150:
-        calibrationFlag = paramValue;
+      calibrationFlag = paramValue;
       break;
     case 151:
-        manualCalibrationFlag = paramValue;
-        calibrationFlag = paramValue;
+      manualCalibrationFlag = paramValue;
+      calibrationFlag = paramValue;
       break;
     case 152:
-        manualCalibrationStage = (int8_t)paramValue;
-        break;
+      manualCalibrationStage = (int8_t)paramValue;
+      break;
     case 153:
-        manualCalibrationOffset[manualCalibrationStage / 2] = (int8_t)paramValue;
-        initManualAmpCompCalibrationVal[manualCalibrationStage / 2] = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
-        break;
+      manualCalibrationOffset[manualCalibrationStage / 2] = (int8_t)paramValue;
+      initManualAmpCompCalibrationVal[manualCalibrationStage / 2] = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
+      break;
       // case 101:
       //   = paramValue " CALIB MODE";
       //   break;

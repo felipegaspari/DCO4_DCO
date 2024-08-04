@@ -19,9 +19,7 @@ void init_serial() {
 void serial_STM32_task() {
 
   while (Serial2.available() > 0) {
-
     char commandCharacter = Serial2.read();
-    //Serial.println((char)commandCharacter);
     switch (commandCharacter) {
         // case 'v':
         //   {
@@ -228,18 +226,19 @@ void serial_STM32_task() {
 
       case 'w':
         {
-          byte paramBytes[2];
+          byte paramBytes[3];
           byte finishByte = 1;
           byte readByte = 0;
 
           while (Serial2.available() < 1) {}
 
-          Serial2.readBytes(paramBytes, 2);
+          Serial2.readBytes(paramBytes, 3);
 
           uint8_t paramNumber = paramBytes[0];
           int16_t paramValue = paramBytes[1];
 
           update_parameters(paramNumber, (uint16_t)paramValue);
+
           break;
         }
       case 'x':
