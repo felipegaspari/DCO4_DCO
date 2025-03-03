@@ -181,11 +181,14 @@ void serial_STM32_task() {
       case 's':
         {
           while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 4);
-          ADSR1_attack = dataArray[0] * 16;
-          ADSR1_decay = dataArray[1] * 16;
-          ADSR1_sustain = dataArray[2] * 16;
-          ADSR1_release = dataArray[3] * 16;
+          byte byteArray[8];
+          Serial2.readBytes(byteArray, 8);
+
+          ADSR1_attack = word(byteArray[0], byteArray[1]);
+          ADSR1_decay = word(byteArray[2], byteArray[3]);
+          ADSR1_sustain = word(byteArray[4], byteArray[5]);
+          ADSR1_release = word(byteArray[6], byteArray[7]);
+
           break;
         }
         //case 'h':
@@ -268,7 +271,7 @@ void serial_STM32_task() {
   }
 }
 
-void serial_send_note_on(uint8_t voice_n, uint8_t note_velo, uint8_t note) {
+inline void serial_send_note_on(uint8_t voice_n, uint8_t note_velo, uint8_t note) {
 
 
   byte sendArray[4];
@@ -283,7 +286,7 @@ void serial_send_note_on(uint8_t voice_n, uint8_t note_velo, uint8_t note) {
   Serial2.write(sendArray, 4);
 }
 
-void serial_send_note_off(uint8_t voice_n) {
+inline void serial_send_note_off(uint8_t voice_n) {
   byte sendArray[2] = { (uint8_t)'o', voice_n };
   //while (Serial2.availableForWrite() < 1) {}
   //Serial2.write((char *)"o");
@@ -304,7 +307,7 @@ void serial_send_generaldata(uint16_t data) {
   }
 }
 
-void serialSendParam32(byte paramNumber, uint32_t paramValue) {
+inline void serialSendParam32(byte paramNumber, uint32_t paramValue) {
 
   uint8_t *b = (uint8_t *)&paramValue;
   byte finishByte = 1;

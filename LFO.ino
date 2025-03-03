@@ -36,14 +36,14 @@ void init_LFO2() {
   LFO2_class.setMode0Freq(5);   // set LFO to 30 Hz
 }
 
-void LFO1() {
+inline void LFO1() {
   //tLFO1 = micros();                                     // take timestamp
   //LFO1Level = LFO1_CC_HALF - LFO1_class.getWave(micros());
   LFO1Level = LFO1_class.getWave(micros()) - 500;
   DETUNE_INTERNAL = (float)((float)LFO1Level * LFO1toDCO);
 }
 
-void LFO2() {
+inline void LFO2() {
   //tLFO1 = micros();                                     // take timestamp
   //LFO1Level = LFO1_CC_HALF - LFO1_class.getWave(micros());
   LFO2Level = LFO2_class.getWave(micros()) - 500;
@@ -51,7 +51,7 @@ void LFO2() {
   DETUNE_INTERNAL2 = (float)((float)LFO2Level * LFO2toDETUNE2);
 }
 
-void DRIFT_LFOs() {
+inline void DRIFT_LFOs() {
   unsigned long currentMicros = micros();
   for (int i = 0; i < NUM_OSCILLATORS; i++) {
     LFO_DRIFT_LEVEL[i] = LFO_DRIFT_CC_HALF - LFO_DRIFT_CLASS[i].getWave(currentMicros);

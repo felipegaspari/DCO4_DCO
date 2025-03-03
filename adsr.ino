@@ -1,4 +1,11 @@
 void init_ADSR() {
+  
+  adsrCreateTables(ADSR_1_CC, ARRAY_SIZE);
+
+    for (int i = 0; i < LIN_TO_EXP_TABLE_SIZE; i++) {
+    linToLogLookup[i] = linearToLogarithmic(i, 10, maxADSRControlValue);
+  }
+
   for (int i = 0; i < NUM_VOICES; i++) {
     ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);    // initialize attack
     ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);      // initialize decay
@@ -8,28 +15,28 @@ void init_ADSR() {
   }
 }
 
-void ADSR_update() {
-  tADSR = micros();
+inline void ADSR_update() {
+  tADSR = millis();
   for (int i = 0; i < NUM_VOICES; i++) {
     if (noteEnd[i] == 1) {
       ADSRVoices[i].adsr1_voice.noteOff(tADSR - 1);
       noteEnd[i] = 0;
     } else if (noteStart[i] == 1) {
       ADSRVoices[i].adsr1_voice.noteOff(tADSR - 1);
-      ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack * 1000);
-      ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay * 1000);
-      ADSRVoices[i].adsr1_voice.setRelease(ADSR1_release * 1000);
+      ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);
+      ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);
+      ADSRVoices[i].adsr1_voice.setRelease(ADSR1_release);
       ADSRVoices[i].adsr1_voice.noteOn(tADSR);
       noteStart[i] = 0;
     }
-    tADSR = micros();
+    tADSR = millis();
     ADSR1Level[i] = ADSRVoices[i].adsr1_voice.getWave(tADSR);
   }
   ADSR_set_parameters();
 }
 
-void ADSR_set_parameters() {
-  if ((tADSR - tADSR_params) > 5000) {
+inline void ADSR_set_parameters() {
+  if ((tADSR - tADSR_params) > 5) {
     for (int i = 0; i < NUM_VOICES; i++) {
       ADSRVoices[i].adsr1_voice.setSustain(ADSR1_sustain);
     }

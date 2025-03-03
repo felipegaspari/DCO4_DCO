@@ -21,6 +21,30 @@ char * uintToStr( const uint64_t num, char *str )
   return str;
 }
 
+uint16_t linearToLogarithmic(uint16_t linearValue, float base, uint16_t maxValue) {
+  if (linearValue < 0) linearValue = 0;
+  if (linearValue > maxValue) linearValue = maxValue;
+
+  float normalizedValue = (float)linearValue / (float)maxValue;
+  float logValue = log(normalizedValue * (base - 1) + 1) / log(base);
+  float maxLogValue = log(1 + (base - 1)) / log(base);
+  uint16_t scaledLogValue = (uint16_t)(logValue * ((float)maxValue / maxLogValue));
+
+  return scaledLogValue;
+}
+
+uint16_t linearToExponential(uint16_t linearValue, float base, uint16_t maxValue) {
+
+  if (linearValue < 0) linearValue = 0;
+  if (linearValue > maxValue) linearValue = maxValue;
+
+  float normalizedValue = (float)linearValue / (float)maxValue;
+  float expValue = pow(base, normalizedValue) - 1;
+  float maxExpValue = pow(base, 1.0) - 1;
+  uint16_t scaledExpValue = (uint16_t)(expValue * ((float)maxValue / maxExpValue));
+
+  return scaledExpValue;
+}
 
 uint16_t faderExpConverter(uint16_t readingValue) {
   uint16_t pow3Calc = readingValue / 4;

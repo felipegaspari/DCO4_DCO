@@ -101,6 +101,9 @@ void DCO_calibration() {
 
     restart_DCO_calibration();
 
+    ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
+    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), ampCompCalibrationVal);
+
     if ((currentDCO % 2) == 0) {
       if (firstTuneFlag == true) {
         find_PW_center(0);
@@ -113,7 +116,6 @@ void DCO_calibration() {
     } else {
       DCO_calibration_current_note = DCO_calibration_start_note;
       VOICE_NOTES[0] = DCO_calibration_current_note;
-      ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO];
     }
 
     // uint16_t lowestFrequency = find_lowest_freq();
@@ -158,7 +160,7 @@ void restart_DCO_calibration() {
   arrayPos += 2;
 
   calibrationData[arrayPos] = (uint32_t)(sNotePitches[DCO_calibration_current_note - calibration_note_interval - 12] * 100);
-  calibrationData[arrayPos + 1] = initManualAmpCompCalibrationVal[currentDCO];
+  calibrationData[arrayPos + 1] = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
 
   arrayPos += 2;
 
@@ -225,7 +227,7 @@ void find_PW_center(uint8_t mode) {
   PIDOutputLowerLimit = 0;
   PIDOutputHigherLimit = DIV_COUNTER_PW;
 
-  ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO];
+  ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
 
   if (firstTuneFlag == true) {
     PW[currentDCO / 2] = DIV_COUNTER_PW / 2;
@@ -237,7 +239,7 @@ void find_PW_center(uint8_t mode) {
     PWCalibrationVal = PW_CENTER[currentDCO / 2];
   }
 
-  voice_task_autotune(voiceTaskMode, initManualAmpCompCalibrationVal[currentDCO]);
+  voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
 
   DCO_calibration_difference = 4000;
   lastDCODifference = 50000;

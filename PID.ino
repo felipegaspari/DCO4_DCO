@@ -322,7 +322,7 @@ void calibrateOscillator() {
     DCO_calibration_current_note = DCO_calibration_start_note + (calibration_note_interval * (j - 4) / 2);
     VOICE_NOTES[0] = DCO_calibration_current_note;
     if (j == 4) {
-      currentAmpCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO] * 1.35;
+      currentAmpCompCalibrationVal = (initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO])* 1.35;
     } else if (j == 6) {
       currentAmpCompCalibrationVal = logarithmicInterpolation(calibrationData[2], calibrationData[3], calibrationData[4], calibrationData[5], sNotePitches[DCO_calibration_current_note - 12] * 100);
     } else {

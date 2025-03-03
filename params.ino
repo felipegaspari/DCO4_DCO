@@ -1,4 +1,4 @@
-void update_parameters(byte paramNumber, int16_t paramValue) {
+inline void update_parameters(byte paramNumber, int16_t paramValue) {
   switch (paramNumber) {
     case 5:
       sqr1Status = paramValue;
@@ -106,12 +106,12 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
 
     case 45:
       LFO2toPW = paramValue;
-      LFO2toPW = LFO2toPW / 4;
-      LFO2toPWM_formula = (float)1 / 64 * LFO2toPW;
+      LFO2toPWM_formula = (float)1 / 512 * LFO2toPW;
       break;
 
     case 46:
       ADSR1toPWM = paramValue - 512;
+      ADSR1toPWM_formula = (float)1 / 512 * ADSR1toPWM;
       break;
 
     case 47:
@@ -154,8 +154,8 @@ void update_parameters(byte paramNumber, int16_t paramValue) {
       manualCalibrationStage = (int8_t)paramValue;
       break;
     case 153:
-      manualCalibrationOffset[manualCalibrationStage / 2] = (int8_t)paramValue;
-      initManualAmpCompCalibrationVal[manualCalibrationStage / 2] = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
+      manualCalibrationOffset[(uint8_t)manualCalibrationStage / 2] = (int8_t)paramValue;
+      //initManualAmpCompCalibrationVal[manualCalibrationStage / 2] = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2]; // WAS WRONG ?
       break;
       // case 101:
       //   = paramValue " CALIB MODE";

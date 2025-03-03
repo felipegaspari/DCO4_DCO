@@ -26,8 +26,9 @@ unsigned long DCOCalibrationStart;
 bool DCO_calibration_lastVal = 0;
 
 volatile uint16_t ampCompCalibrationVal;
-volatile int8_t initManualAmpCompCalibrationValPreset = 25;
-volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {24,26,25,25,25,18,20,25};
+int8_t initManualAmpCompCalibrationValPreset = 25;
+// rp2040 dco //volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {24,26,25,25,25,18,20,25};
+volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {25,25,25,25,25,25,25,25};
 volatile uint16_t ampCompLowestFreqVal = 10;
 
 

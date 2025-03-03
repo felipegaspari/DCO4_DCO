@@ -10,7 +10,7 @@ void init_voices() {
   voice_task();
 }
 
-void voice_task() {
+inline void voice_task() {
   // unsigned long voice_task_1_time;
   // unsigned long voice_task_2_time;
   // unsigned long voice_task_3_time;
@@ -164,7 +164,7 @@ void voice_task() {
         DETUNE_DRIFT_OSC2 = (float)((float)LFO_DRIFT_LEVEL[DCO_B] * 0.0000005f * analogDrift);
       }
 */
-      float ADSRModifier = (ADSR1toDETUNE1 != 0) ? (ADSR1Level[i] * ADSR1toDETUNE1_formula) : 0;
+      float ADSRModifier = (ADSR1toDETUNE1 != 0) ? ((float)linToLogLookup[ADSR1Level[i]] * ADSR1toDETUNE1_formula) : 0;
       float ADSRModifierOSC1 = (ADSR3ToOscSelect == 0 || ADSR3ToOscSelect == 2) ? ADSRModifier : 0;
       float ADSRModifierOSC2 = (ADSR3ToOscSelect == 1 || ADSR3ToOscSelect == 2) ? ADSRModifier : 0;
 
@@ -192,7 +192,7 @@ void voice_task() {
       } else if ((uint16_t)freq2 < 6) {
         freq2 = 6;
       }
-      
+
 
 
       /* FIN */
@@ -276,17 +276,17 @@ void voice_task() {
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
 
         if (sqr1Status) {
-          PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - ((float)LFO2Level * LFO2toPWM_formula) - PW[0]), 0, DIV_COUNTER_PW - 1);
+          float ADSR1toPW_calculated = (ADSR1toPWM != 0) ? ((float)ADSR1Level[i] / 4.00f * ADSR1toPWM_formula) : 0;
+          float LFO2toPW_calculated = (LFO2toPW != 0) ? ((float)LFO2Level * LFO2toPWM_formula) : 0;
+          PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - LFO2toPW_calculated - PW[0] + ADSR1toPW_calculated), 0, DIV_COUNTER_PW - 1);
           //PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
-          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[0], i));
+          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[i], i));
         } else {
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
         }
         // Serial.println("VOICE TASK 13");
         // pwm_set_chan_level(VCO_PWM_SLICES[0], pwm_gpio_to_channel(22), (uint16_t)(vcoLevel)); // VCO control
       }
-      //pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), dato_serial);
-      // pwm_set_chan_level(RANGE_PWM_SLICES[i + 1], pwm_gpio_to_channel(RANGE_PINS[i + 1]), dato_serial);
     }
     note_on_flag_flag[i] = false;
   }
@@ -298,7 +298,7 @@ void voice_task() {
   //   }
 }
 
-uint8_t get_free_voice_sequential() {
+inline uint8_t get_free_voice_sequential() {
   uint8_t nextVoice;
   uint8_t freeVoices = 0;
 
@@ -339,7 +339,7 @@ uint8_t get_free_voice_sequential() {
   return nextVoice;
 }
 
-uint8_t get_free_voice() {
+inline uint8_t get_free_voice() {
   uint32_t oldest_time = millis();
   uint8_t oldest_voice = 0;
 
@@ -362,7 +362,7 @@ uint8_t get_free_voice() {
   return oldest_voice;
 }
 
-void setVoiceMode() {
+inline void setVoiceMode() {
   switch (voiceMode) {
     case 0:
       NUM_VOICES = 1;
@@ -380,7 +380,7 @@ void setVoiceMode() {
 }
 
 // Uses non linear interpolation and coefficients
-uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
+inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
 
   // Check if x is out of bounds
   if (x <= ampCompFrequencyArray[voiceN][0]) {
@@ -404,7 +404,7 @@ uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
   return 0;
 }
 
-uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
+inline uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
 
   uint16_t chanLevel;
 
@@ -474,7 +474,8 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
   //
   if (manualCalibrationFlag == true) {  // One Ocillator at a time to get correct gap
 
-    uint8_t currentCalibrationOscillator = manualCalibrationStage / 2;
+    int8_t currentCalibrationOscillator = manualCalibrationStage / 2;
+
     // ALL AT ONCE
     for (int i = 0; i < NUM_OSCILLATORS; i++) {
       uint8_t pioNumber = VOICE_TO_PIO[i];
@@ -497,10 +498,11 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
 
         pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
 
-        uint16_t chanLevelManualCalibration = (uint16_t)initManualAmpCompCalibrationVal[i];
-        pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), chanLevelManualCalibration);
-
+        pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), calibrationValue);
+        
         pwm_set_chan_level(PW_PWM_SLICES[i / 2], pwm_gpio_to_channel(PW_PINS[i / 2]), 0);
+
+        Serial.println((String)"currentCalibrationOscillator: " + (int)currentCalibrationOscillator + (String)"        calibrationValue: " + (int)calibrationValue);
       }
     }
   } else {
@@ -716,37 +718,37 @@ void voice_task_debug() {
 
 inline int32_t interpolatePitchMultiplier(float x_float) {
   int32_t x = (int32_t)(x_float * (float)multiplierTableScale);
-    // Check if x is out of bounds
-    if (x <= xMultiplierTable[0]) {
-        return yMultiplierTable[0];
-    }
-    if (x >= xMultiplierTable[multiplierTableSize - 1]) {
-        return yMultiplierTable[multiplierTableSize - 1];
-    }
+  // Check if x is out of bounds
+  if (x <= xMultiplierTable[0]) {
+    return yMultiplierTable[0];
+  }
+  if (x >= xMultiplierTable[multiplierTableSize - 1]) {
+    return yMultiplierTable[multiplierTableSize - 1];
+  }
 
-    // Binary search to find the interval
-    int low = 0;
-    int high = multiplierTableSize - 1;
-    while (low <= high) {
-        int mid = (low + high) / 2;
-        if (xMultiplierTable[mid] <= x && x < xMultiplierTable[mid + 1]) {
-            low = mid;
-            break;
-        } else if (x < xMultiplierTable[mid]) {
-            high = mid - 1;
-        } else {
-            low = mid + 1;
-        }
+  // Binary search to find the interval
+  int low = 0;
+  int high = multiplierTableSize - 1;
+  while (low <= high) {
+    int mid = (low + high) / 2;
+    if (xMultiplierTable[mid] <= x && x < xMultiplierTable[mid + 1]) {
+      low = mid;
+      break;
+    } else if (x < xMultiplierTable[mid]) {
+      high = mid - 1;
+    } else {
+      low = mid + 1;
     }
+  }
 
-    // Perform linear interpolation using fixed-point arithmetic
-    int32_t x0 = xMultiplierTable[low];
-    int32_t x1 = xMultiplierTable[low + 1];
-    int32_t y0 = yMultiplierTable[low];
-    int32_t y1 = yMultiplierTable[low + 1];
+  // Perform linear interpolation using fixed-point arithmetic
+  int32_t x0 = xMultiplierTable[low];
+  int32_t x1 = xMultiplierTable[low + 1];
+  int32_t y0 = yMultiplierTable[low];
+  int32_t y1 = yMultiplierTable[low + 1];
 
-    int32_t y = y0 + ((y1 - y0) * (x - x0) / (x1 - x0));
-    return y;
+  int32_t y = y0 + ((y1 - y0) * (x - x0) / (x1 - x0));
+  return y;
 }
 
 void initMultiplierTables() {
@@ -762,7 +764,7 @@ void initMultiplierTables() {
       x = -1.00d;
       y_value = 0.25d;
     } else if (i == multiplierTableSize - 1) {
-      x = 3 ;
+      x = 3;
       y_value = 4;
     } else {
       x = (-1.00d + (fraction * (double)i));

@@ -16,7 +16,7 @@
 // #include "hardware/spi.h"
 
 #include "LittleFS.h"
-#include <SingleFileDrive.h>
+// #include <SingleFileDrive.h>
 // #include <EEPROM.h>
 
 #include "globals.h"
@@ -53,7 +53,7 @@ unsigned long b;
 a = micros();
 b = micros();
 myRA.addValue(b - a);
-Serial.println(myRA.getAverage());
+Serial.println(U.getAverage());
 */
 #endif
 
@@ -68,6 +68,7 @@ void setup() {
   init_LFOs();
   init_DRIFT_LFOs();
 
+  
   // init_tuner();
   // init_tuning_tables();
 
@@ -97,7 +98,11 @@ void setup1() {
   init_PID();
 
   init_FS();
+
+  init_ADSR();
+
   //initAmplitudeCompensation();
+  
   precomputeCoefficients();
 
   calibrationFlag = false;
@@ -144,16 +149,16 @@ void loop() {
 void loop1() {
   // unsigned long loop1_start_time = micros();
   // unsigned long loop1_total_time;
-      // unsigned long a;
-      // unsigned long b;
-      // a = micros();
+      unsigned long a;
+      unsigned long b;
+      a = micros();
 
   millisTimer();
 
   if (calibrationFlag == true) {
     if (manualCalibrationFlag == true) {
       VOICE_NOTES[0] = manual_DCO_calibration_start_note;
-      ampCompCalibrationVal = initManualAmpCompCalibrationVal[0];
+      ampCompCalibrationVal = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
       voice_task_autotune(0, ampCompCalibrationVal);
       DCO_calibration_debug();
       Serial.println((String) "PW value: " + (PW[0] / 4));
@@ -189,7 +194,10 @@ void loop1() {
     // Serial.println("loop1");
   }
 
-      //   b = micros();
-      // myRA.addValue(b - a);
-      // Serial.println(myRA.getAverage());
+        b = micros();
+#ifdef RUNNING_AVERAGE
+      myRA.addValue(b - a);
+      Serial.println(myRA.getAverage());
+#endif
+
 }

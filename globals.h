@@ -61,8 +61,14 @@ float DETUNE_INTERNAL_FIFO_float = 1;
 uint32_t* detune_fifo_variable = &DETUNE_INTERNAL_FIFO;
 float BASE_NOTE = 440.0f;
 
-static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
-static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
+// WEACT:
+// static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
+// static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
+
+// Raspberry Pi:
+static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 28, 26, 19, 18, 15, 13, 12, 8 };
+static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 27, 22, 17, 16, 14, 11, 9, 7 };
+
 static constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 0, 0, 0, 0, 1, 1, 1, 1 };
 static constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1, 2, 3 };
 
