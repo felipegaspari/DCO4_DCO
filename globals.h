@@ -21,13 +21,13 @@
 static constexpr uint32_t sysClock = 225000;
 static constexpr uint32_t sysClock_Hz = sysClock * 1000;
 
-static constexpr uint16_t DIV_COUNTER = 10000;
+static constexpr uint16_t DIV_COUNTER = 14000;
 static constexpr uint16_t DIV_COUNTER_PW = 1024;
 
 static constexpr uint32_t pioPulseLength = 4000;
 static constexpr uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
 static constexpr uint32_t eightPioPulseLength = pioPulseLength / 8;
-static constexpr uint32_t correctionPioPulseLength = (pioPulseLength / 8) - (pioPulseLength / 500);
+static constexpr uint32_t correctionPioPulseLength = 7;
 
 static constexpr float halfSysClock_Hz = sysClock_Hz / 2;
 static constexpr float eightSysClock_Hz = sysClock_Hz / 8;
@@ -39,13 +39,15 @@ uint32_t loop1_micros;
 uint32_t loop0_microsLast;
 uint32_t loop1_microsLast;
 
-uint8_t NUM_VOICES = NUM_VOICES_TOTAL;
-uint8_t STACK_VOICES = 1;
+volatile uint8_t NUM_VOICES = NUM_VOICES_TOTAL;
+volatile uint8_t STACK_VOICES = 1;
 
-uint8_t voiceMode = 1;
+volatile uint8_t voiceMode = 1;
 uint8_t syncMode = 0;
 uint8_t oscSync = 0;
-uint8_t polyMode = 1;
+volatile uint8_t polyMode = 1;
+
+uint16_t phaseAlignOSC2;
 
 uint8_t unisonDetune = 10;
 uint8_t analogDrift = 0;
@@ -61,13 +63,13 @@ float DETUNE_INTERNAL_FIFO_float = 1;
 uint32_t* detune_fifo_variable = &DETUNE_INTERNAL_FIFO;
 float BASE_NOTE = 440.0f;
 
-// WEACT:
-// static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
-// static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
+// WEACT RP2040:
+static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
+static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14, 11, 9, 7 };
 
-// Raspberry Pi:
-static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 28, 26, 19, 18, 15, 13, 12, 8 };
-static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 27, 22, 17, 16, 14, 11, 9, 7 };
+// Raspberry Pi Pico:
+// static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 28, 26, 19, 18, 15, 13, 12, 8 };
+// static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 27, 22, 17, 16, 14, 11,  9,  7 };
 
 static constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 0, 0, 0, 0, 1, 1, 1, 1 };
 static constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1, 2, 3 };
@@ -96,16 +98,16 @@ uint8_t VCO_PWM_SLICES[NUM_VOICES_TOTAL * 2];
 uint8_t PW_PWM_SLICES[NUM_VOICES_TOTAL];
 
 uint16_t PW_CENTER[NUM_VOICES_TOTAL] = { 570, 552, 540, 553 };
-uint16_t PW_LOW_LIMIT[NUM_VOICES_TOTAL];
+uint16_t PW_LOW_LIMIT[NUM_VOICES_TOTAL] = {0,0,0,0};
 uint16_t PW_HIGH_LIMIT[NUM_VOICES_TOTAL] = { DIV_COUNTER_PW, DIV_COUNTER_PW, DIV_COUNTER_PW, DIV_COUNTER_PW };
 uint16_t PW_LOOKUP[3] = { 0, (DIV_COUNTER_PW / 2) - 1, DIV_COUNTER_PW - 1 };
 uint16_t PW_PWM[NUM_VOICES_TOTAL];
 
-uint32_t VOICES[NUM_VOICES_TOTAL];
-uint8_t VOICES_LAST[NUM_VOICES_TOTAL];
-uint8_t VOICES_LAST_SEQUENCE[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
-uint8_t VOICE_NOTES[NUM_VOICES_TOTAL];
-uint8_t NEXT_VOICE = 0;
+volatile uint32_t VOICES[NUM_VOICES_TOTAL];
+volatile uint8_t VOICES_LAST[NUM_VOICES_TOTAL];
+volatile uint8_t VOICES_LAST_SEQUENCE[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+volatile uint8_t VOICE_NOTES[NUM_VOICES_TOTAL];
+volatile uint8_t NEXT_VOICE = 0;
 
 uint32_t LED_BLINK_START = 0;
 

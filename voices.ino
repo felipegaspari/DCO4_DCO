@@ -35,7 +35,7 @@ inline void voice_task() {
   last_midi_pitch_bend = midi_pitch_bend;
   LAST_DETUNE = DETUNE;
 
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
 
     if (note_on_flag[i] == 1) {
       note_on_flag_flag[i] = true;
@@ -64,21 +64,19 @@ inline void voice_task() {
       uint8_t DCO_A = i * 2;
       uint8_t DCO_B = (i * 2) + 1;
 
-
       // Serial.println("VOICE TASK 2");
       ////***********************    PORTAMENTO CODE   ****************************************/////
       if (portamento_time > 0 /*&& portamento_start != 0 && portamento_stop != 0*/) {
         portamentoTimer[i] = micros() - portamentoStartMicros[i];
 
         if (note_on_flag_flag[i]) {
-          //Serial.println("NOTE ON");
+          // Serial.println("NOTE ON");
           portamentoStartMicros[i] = micros();
 
           portamentoTimer[i] = 0;
 
           portamento_start[DCO_A] = portamento_cur_freq[DCO_A];
           portamento_start[DCO_B] = portamento_cur_freq[DCO_B];
-
 
           portamento_stop[DCO_A] = sNotePitches[note1];
           portamento_stop[DCO_B] = sNotePitches[note2];
@@ -94,7 +92,6 @@ inline void voice_task() {
           portamento_cur_freq[DCO_B] = sNotePitches[note2];
           portamento_start[DCO_B] = portamento_cur_freq[DCO_B];
           portamento_stop[DCO_B] = portamento_cur_freq[DCO_B];
-
         } else {
           portamento_cur_freq[DCO_A] = (float)portamento_start[DCO_A] + (float)(freqPortaInterval[DCO_A] * (float)portamentoTimer[i]);
           portamento_cur_freq[DCO_B] = (float)portamento_start[DCO_B] + (float)(freqPortaInterval[DCO_B] * (float)portamentoTimer[i]);
@@ -102,7 +99,6 @@ inline void voice_task() {
 
         freq = portamento_cur_freq[DCO_A];
         freq2 = portamento_cur_freq[DCO_B];
-
       } else {
         freq = (float)sNotePitches[note1];
         portamento_cur_freq[DCO_A] = freq;
@@ -117,7 +113,7 @@ inline void voice_task() {
       ////***********************    PORTAMENTO CODE  END    ****************************************/////
 
       // Serial.println("VOICE TASK 3");
-      //voice_task_1_time = micros() - voice_task_start_time;
+      // voice_task_1_time = micros() - voice_task_start_time;
 
       /* OLD CODE
       float ADSRModifier;
@@ -193,11 +189,9 @@ inline void voice_task() {
         freq2 = 6;
       }
 
-
-
       /* FIN */
 
-      //voice_task_2_time = micros() - voice_task_start_time;
+      // voice_task_2_time = micros() - voice_task_start_time;
 
       uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
       uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
@@ -206,18 +200,27 @@ inline void voice_task() {
       uint8_t sm1N = VOICE_TO_SM[DCO_A];
       uint8_t sm2N = VOICE_TO_SM[DCO_B];
 
-      //voice_task_3_time = micros() - voice_task_start_time;
+      // voice_task_3_time = micros() - voice_task_start_time;
 
-      register uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz / freq) - eightPioPulseLength - 1);
+      register uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz / freq) - eightPioPulseLength);
       if (freq == 0)
         clk_div1 = 0;
 
-      register uint32_t clk_div2 = (uint32_t)((eightSysClock_Hz / freq2) - eightPioPulseLength - 1);
+      register uint32_t clk_div2;
+      uint32_t phaseDelay;
+
+      if (oscSync > 1) {
+
+        clk_div2 = (uint32_t)(sysClock_Hz / freq2);
+        phaseDelay = (clk_div2 - pioPulseLength) / 180 * phaseAlignOSC2;
+        clk_div2 = (uint32_t)((clk_div2 - pioPulseLength - phaseDelay) / 8);
+      } else {
+        clk_div2 = (uint32_t)((eightSysClock_Hz / freq2) - eightPioPulseLength);
+      }
       if (freq2 == 0)
         clk_div2 = 0;
 
-      //voice_task_4_time = micros() - voice_task_start_time;
-
+      // voice_task_4_time = micros() - voice_task_start_time;
 
       uint16_t chanLevel, chanLevel2;
 
@@ -236,7 +239,7 @@ inline void voice_task() {
           break;
       }
 
-      //VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
+      // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
       pio_sm_put(pioN_A, sm1N, clk_div1);
       pio_sm_put(pioN_B, sm2N, clk_div2);
@@ -246,27 +249,16 @@ inline void voice_task() {
       // Serial.println("VOICE TASK 5a");
 
       if (note_on_flag_flag[i]) {
+        if (oscSync > 0) {
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
 
-        switch (oscSync) {
-          case 1:
-            pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(9 + offset[pioNumberA]));  // OSC Sync MODE
-            pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(9 + offset[pioNumberB]));
-            break;
-
-          case 2:
-            pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(3 + offset[pioNumberA]));  // OSC Half Sync MODE
-            pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(11 + offset[pioNumberB]));
-            break;
-
-          case 3:
-            pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(3 + offset[pioNumberA]));  // OSC 3rd-quarter Sync MODE
-            pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(9 + offset[pioNumberB]));
-            break;
-
-          default:
-            break;
+          if (oscSync > 1) {
+            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+            pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+          }
         }
-
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
       }
@@ -279,7 +271,7 @@ inline void voice_task() {
           float ADSR1toPW_calculated = (ADSR1toPWM != 0) ? ((float)ADSR1Level[i] / 4.00f * ADSR1toPWM_formula) : 0;
           float LFO2toPW_calculated = (LFO2toPW != 0) ? ((float)LFO2Level * LFO2toPWM_formula) : 0;
           PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - LFO2toPW_calculated - PW[0] + ADSR1toPW_calculated), 0, DIV_COUNTER_PW - 1);
-          //PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
+          // PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[i], i));
         } else {
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
@@ -298,12 +290,147 @@ inline void voice_task() {
   //   }
 }
 
+inline void voice_task_simple() {
+  for (int i = 0; i < NUM_VOICES; i++) {
+
+    if (note_on_flag[i] == 1) {
+      note_on_flag_flag[i] = true;
+      note_on_flag[i] = 0;
+    }
+
+    if (VOICE_NOTES[i] >= 0) {
+      uint8_t note1 = VOICE_NOTES[i] - 36 + OSC1_interval;
+      if (note1 > highestNote) {
+        note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
+      }
+      uint8_t note2 = note1 - 36 + OSC2_interval;
+      if (note2 > highestNote) {
+        note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
+      }
+
+      if (OSC2DetuneVal == 256) {
+        OSC2_detune = 1;
+      } else {
+        OSC2_detune = 1.00f + (0.0002f * ((int)256 - OSC2DetuneVal));
+      }
+
+      float freq;
+      float freq2;
+
+      uint8_t DCO_A = i * 2;
+      uint8_t DCO_B = (i * 2) + 1;
+
+      freq = sNotePitches[note1];
+      freq2 = sNotePitches[note2];
+
+      // Serial.println("VOICE TASK 2");
+
+      if ((uint16_t)freq > maxFrequency) {
+        freq = maxFrequency;
+      } else if ((uint16_t)freq < 6) {
+        freq = 6;
+      }
+      if ((uint16_t)freq2 >= maxFrequency) {
+        freq2 = maxFrequency;
+      } else if ((uint16_t)freq2 < 6) {
+        freq2 = 6;
+      }
+
+      // voice_task_2_time = micros() - voice_task_start_time;
+
+      uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
+      uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
+      PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
+      PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
+      uint8_t sm1N = VOICE_TO_SM[DCO_A];
+      uint8_t sm2N = VOICE_TO_SM[DCO_B];
+
+      // voice_task_3_time = micros() - voice_task_start_time;
+
+      uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz / freq) - eightPioPulseLength);
+      if (freq == 0)
+        clk_div1 = 0;
+
+      uint32_t clk_div2;
+      uint32_t phaseDelay;
+
+      if (oscSync > 1) {
+
+        clk_div2 = (uint32_t)(sysClock_Hz / freq2);
+        phaseDelay = (clk_div2 - pioPulseLength) / 180 * phaseAlignOSC2;
+        clk_div2 = (uint32_t)((clk_div2 - pioPulseLength - phaseDelay) / 8);
+      } else {
+        clk_div2 = (uint32_t)((eightSysClock_Hz / freq2) - eightPioPulseLength);
+      }
+      if (freq2 == 0)
+        clk_div2 = 0;
+
+      // voice_task_4_time = micros() - voice_task_start_time;
+
+      uint16_t chanLevel, chanLevel2;
+
+      switch (syncMode) {
+        case 0:
+          chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int32_t)(freq2 * 100), DCO_B);
+          break;
+        case 1:
+          chanLevel = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int32_t)(freq2 * 100), DCO_B);
+          break;
+        case 2:
+          chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_B);
+          break;
+      }
+
+      // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
+
+      pio_sm_put(pioN_A, sm1N, clk_div1);
+      pio_sm_put(pioN_B, sm2N, clk_div2);
+      pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+      pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+
+      // Serial.println("VOICE TASK 5a");
+
+      if (note_on_flag_flag[i]) {
+        if (oscSync > 0) {
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+
+          if (oscSync > 1) {
+            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+            pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_x, 31));
+          }
+        }
+
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+      }
+
+      if (timer99microsFlag) {
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+      }
+
+      if (sqr1Status) {
+        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW_CENTER[i]);
+      } else {
+        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
+      }
+    }
+    note_on_flag_flag[i] = false;
+  }
+}
+
 inline uint8_t get_free_voice_sequential() {
   uint8_t nextVoice;
   uint8_t freeVoices = 0;
 
   if (VOICES[VOICES_LAST_SEQUENCE[NUM_VOICES_TOTAL - 1]] == 1 || VOICES[VOICES_LAST_SEQUENCE[NUM_VOICES_TOTAL - 1]] == 0) {
-    for (int voiceIndex = NUM_VOICES_TOTAL - 1; voiceIndex >= 0; voiceIndex--) {
+    for (int voiceIndex = NUM_VOICES_TOTAL - 1; voiceIndex > 0; voiceIndex--) {
       if (VOICES[VOICES_LAST_SEQUENCE[voiceIndex]] == 0) {
         nextVoice = VOICES_LAST_SEQUENCE[voiceIndex];
         freeVoices = 1;
@@ -318,7 +445,7 @@ inline uint8_t get_free_voice_sequential() {
     if (VOICES[VOICES_LAST_SEQUENCE[NUM_VOICES_TOTAL - 1]] == 0) {
       nextVoice = VOICES_LAST_SEQUENCE[NUM_VOICES_TOTAL - 1];
 
-      for (int voiceIndex = NUM_VOICES_TOTAL - 1; voiceIndex >= 0; voiceIndex--) {
+      for (int voiceIndex = NUM_VOICES_TOTAL - 1; voiceIndex > 0; voiceIndex--) {
         VOICES_LAST_SEQUENCE[voiceIndex] = VOICES_LAST_SEQUENCE[voiceIndex - 1];
       }
 
@@ -330,7 +457,7 @@ inline uint8_t get_free_voice_sequential() {
   if (freeVoices == 0) {
     nextVoice = VOICES_LAST_SEQUENCE[NUM_VOICES_TOTAL - 1];
 
-    for (int voiceIndex = NUM_VOICES_TOTAL - 1; voiceIndex >= 0; voiceIndex--) {
+    for (int voiceIndex = NUM_VOICES_TOTAL - 1; voiceIndex > 0; voiceIndex--) {
       VOICES_LAST_SEQUENCE[voiceIndex] = VOICES_LAST_SEQUENCE[voiceIndex - 1];
     }
 
@@ -414,16 +541,14 @@ inline uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
   } else if (PWval <= 0) {
     chanLevel = PW_LOW_LIMIT[voiceN];
     return chanLevel;
-
   } else {
 
     if (PWval >= PW_LOOKUP[1]) {
       chanLevel = map(PWval, PW_LOOKUP[1], PW_LOOKUP[2], PW_CENTER[voiceN], PW_HIGH_LIMIT[voiceN]);
       return chanLevel;
-
     } else {
       chanLevel = map(PWval, PW_LOOKUP[0], PW_LOOKUP[1], PW_LOW_LIMIT[voiceN], PW_CENTER[voiceN]);
-      return chanLevel;
+      return chanLevel;   
     }
 
     return chanLevel;
@@ -454,7 +579,6 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
   //     uint8_t pioNumber = VOICE_TO_PIO[i];
   //     PIO pioN = pio[VOICE_TO_PIO[i]];
   //     uint8_t sm1N = VOICE_TO_SM[i];
-
 
   //     register uint32_t clk_div1 = (int)((float)(eightSysClock_Hz + pioPulseLengthTimesEight - eightPioPulseLength * freq) / freq);
 
@@ -499,10 +623,10 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
         pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
 
         pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), calibrationValue);
-        
+
         pwm_set_chan_level(PW_PWM_SLICES[i / 2], pwm_gpio_to_channel(PW_PINS[i / 2]), 0);
 
-        Serial.println((String)"currentCalibrationOscillator: " + (int)currentCalibrationOscillator + (String)"        calibrationValue: " + (int)calibrationValue);
+        Serial.println((String) "currentCalibrationOscillator: " + (int)currentCalibrationOscillator + (String) "        calibrationValue: " + (int)calibrationValue);
       }
     }
   } else {
@@ -540,7 +664,7 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
 
     voiceFreq[currentDCO] = freq;
     //}
-    //Serial.println((String) "| currentDCO: " + currentDCO + (String) " | freq: " + freq + (String) " | clk_div1: " + clk_div1 + (String) " | ampCompCalibrationVal: " + ampCompCalibrationVal);
+    // Serial.println((String) "| currentDCO: " + currentDCO + (String) " | freq: " + freq + (String) " | clk_div1: " + clk_div1 + (String) " | ampCompCalibrationVal: " + ampCompCalibrationVal);
   }
 }
 
@@ -598,8 +722,6 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
 //   return 0;
 // }
 
-
-
 // uint16_t get_vco_level(float freq) {
 
 //   float vcoLevel;
@@ -625,7 +747,7 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
 
 void voice_task_debug() {
 
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     if (note_on_flag[i] == 1) {
       note_on_flag_flag[i] = true;
       note_on_flag[i] = 0;
@@ -634,7 +756,7 @@ void voice_task_debug() {
 
   last_midi_pitch_bend = midi_pitch_bend;
   LAST_DETUNE = DETUNE;
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     if (VOICE_NOTES[i] >= 0) {
       uint8_t note1 = VOICE_NOTES[i] - 36 + OSC1_interval;
       if (note1 > highestNote) {

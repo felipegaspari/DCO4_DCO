@@ -85,8 +85,8 @@ void adsrCreateTables(float maxVal, int numPoints) {
   }
 }
 
-byte noteStart[NUM_VOICES_TOTAL];
-byte noteEnd[NUM_VOICES_TOTAL];
+volatile byte noteStart[NUM_VOICES_TOTAL];
+volatile byte noteEnd[NUM_VOICES_TOTAL];
 
 uint16_t ADSR1Level[NUM_VOICES_TOTAL];
 

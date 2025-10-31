@@ -4,7 +4,7 @@
 
 void init_voices();
 
-bool note_on_flag_flag[NUM_VOICES_TOTAL];
+volatile bool note_on_flag_flag[NUM_VOICES_TOTAL];
 
 uint32_t portamentoTimer[NUM_VOICES_TOTAL];
 uint32_t portamentoStartMillis[NUM_VOICES_TOTAL];

@@ -18,25 +18,29 @@ uint32_t calibrationData[chanLevelVoiceDataSize];
 
 uint8_t currentDCO;
 
-unsigned long DCO_calibration_lastTime;
+unsigned long edgeDetectionLastTime;
 unsigned long microsNow;
 unsigned long currentNoteCalibrationStart;
 unsigned long DCOCalibrationStart;
 
-bool DCO_calibration_lastVal = 0;
+bool edgeDetectionLastVal = 0;
 
 volatile uint16_t ampCompCalibrationVal;
-int8_t initManualAmpCompCalibrationValPreset = 25;
-// rp2040 dco //volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {24,26,25,25,25,18,20,25};
-volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {25,25,25,25,25,25,25,25};
+int8_t initManualAmpCompCalibrationValPreset = 30;
+// weact rp2040 dco //volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {24,26,25,25,25,18,20,25};
+int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,
+initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,
+
+initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset};
 volatile uint16_t ampCompLowestFreqVal = 10;
 
 
 int pulseCounter = 0;
-float DCO_calibration_avg1, DCO_calibration_avg2;
-double DCO_calibration_difference;
+int samplesCounter = 0;
 
-uint8_t DCO_calibration_avg1_counter, DCO_calibration_avg2_counter;
+double risingEdgeTimeSum, fallingEdgeTimeSum;
+float DCO_calibration_difference;
+
 
 uint16_t samplesNumber;
 

@@ -31,7 +31,7 @@ void handleProgramChange(byte channel, byte program) {
 }
 
 void handlePitchBend(byte channel, int pitchBend) {
-midi_pitch_bend = pitchBend + 8192;
+  midi_pitch_bend = pitchBend + 8192;
 }
 
 void note_on(uint8_t note, uint8_t velocity) {
@@ -85,6 +85,7 @@ void note_on(uint8_t note, uint8_t velocity) {
               VOICES[i] = 1;
               note_on_flag[i] = 1;
               noteStart[i] = 1;
+              noteEnd[i] = 0;
               serial_send_note_on(i, velocity, note - 36 + OSC1_interval);
               return;  // note already playing
             }
@@ -96,12 +97,13 @@ void note_on(uint8_t note, uint8_t velocity) {
         VOICE_NOTES[voice_num] = note;
         note_on_flag[voice_num] = 1;
         noteStart[voice_num] = 1;
+        noteEnd[voice_num] = 0;
         serial_send_note_on(voice_num, velocity, note - 36 + OSC1_interval);
       }
       break;
 
     case 2:
-      for (int i = 0; i < NUM_VOICES; i++)  // REVISAR!!
+      for (int i = 0; i < NUM_VOICES_TOTAL; i++)  // REVISAR!! // Previously NUM_VOICES
       {
         VOICES[i] = 1;
         VOICE_NOTES[i] = note;
@@ -110,14 +112,16 @@ void note_on(uint8_t note, uint8_t velocity) {
         serial_send_note_on(i, velocity, note - 36 + OSC1_interval);
       }
       break;
+    default:
+      return;
+      break;
   }
   last_midi_pitch_bend = 0;
-
 }
 
 void note_off(uint8_t note) {
   // gate off
-  for (int i = 0; i < NUM_VOICES; i++)  // REVISAR!!
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++)  // REVISAR!! // Previously NUM_VOICES
   {
     if (VOICE_NOTES[i] == note) {
       // gpio_put(GATE_PINS[i], 0);
@@ -125,6 +129,7 @@ void note_off(uint8_t note) {
       VOICES[i] = 0;
       VOICES_LAST[i] = note;
       noteEnd[i] = 1;
+      noteStart[i] = 0;
       serial_send_note_off(i);
     }
   }

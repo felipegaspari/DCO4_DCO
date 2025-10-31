@@ -42,7 +42,7 @@
 
 // #include "irq_tuner.h"
 
-#define RUNNING_AVERAGE
+//#define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"
@@ -91,23 +91,22 @@ void setup() {
 void setup1() {
 
   //set_sys_clock_khz(sysClock, true);
-  init_pwm();
-  init_pio();
-  init_voices();
 
   init_PID();
 
   init_FS();
 
   init_ADSR();
-
-  //initAmplitudeCompensation();
   
   precomputeCoefficients();
 
   calibrationFlag = false;
   manualCalibrationFlag = false;
   firstTuneFlag = true;
+
+  init_pwm();
+  init_pio();
+  init_voices();
 
   if (calibrationFlag == true) {
     init_DCO_calibration();
@@ -160,7 +159,7 @@ void loop1() {
       VOICE_NOTES[0] = manual_DCO_calibration_start_note;
       ampCompCalibrationVal = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
       voice_task_autotune(0, ampCompCalibrationVal);
-      DCO_calibration_debug();
+      //DCO_calibration_debug(); // disabled because of manual calibration bug on osc 0 offset. needs fix
       Serial.println((String) "PW value: " + (PW[0] / 4));
 
     } else {
@@ -184,6 +183,7 @@ void loop1() {
     //  loop1_start_time = micros();
     // Serial.println("pre voice task");
     voice_task();
+    //voice_task_simple();
     //voice_task_debug();
     // Serial.println("post voice task");
     // loop speed
@@ -194,8 +194,8 @@ void loop1() {
     // Serial.println("loop1");
   }
 
-        b = micros();
 #ifdef RUNNING_AVERAGE
+      b = micros();
       myRA.addValue(b - a);
       Serial.println(myRA.getAverage());
 #endif

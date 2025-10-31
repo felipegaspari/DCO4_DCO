@@ -99,15 +99,17 @@ bool PID_dco_calibration() {
       voice_task_autotune(0, ampCompCalibrationVal);
       delay(50);
 
-      DCO_calibration_lastTime = micros();
       DCO_calibration_difference = 4000;
+      if (DCO_calibration_current_note == 12) DCO_calibration_difference = 3000;
+      
+
+
       lastDCODifference = 50000;
       lastGapFlipCount = 0;
       lastPIDgap = 50000;
       bestGap = 50000;
       bestCandidate = 50000;
       lastampCompCalibrationVal = 0;
-      DCO_calibration_lastTime = 0;
       PIDMinGapCounter = 0;
 
       return false;
@@ -156,6 +158,7 @@ void PID_find_highest_freq() {
   myPID.SetSampleTime(5);
   while (abs(DCO_calibration_difference) > 0.5) {
     voice_task_autotune(1, DIV_COUNTER);
+
     delay(4);
     find_gap(0);
     PIDInput = 0 - (double)DCO_calibration_difference;
@@ -308,7 +311,7 @@ float find_lowest_freq() {
   return closestToZero * 100;
 }
 
-void calibrateOscillator() {
+void calibrate_DCO() {
 
   double tolerance;      // minGap
   uint16_t minAmpComp;   // Lower Limit

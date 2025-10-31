@@ -16,22 +16,6 @@ float cCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
 int32_t ampCompFrequencyArray[NUM_OSCILLATORS][ampCompTableSize];
 int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize];
 
- //void initAmplitudeCompensation() {
-// //   ampCompFrequencyArray[j][0] = 0;
-// //   ampCompFrequencyArray[j][1] = sNotePitches[manual_DCO_calibration_start_note - 12] * 100;
-// for (int j = 0; j < NUM_OSCILLATORS; j++) {
-    
-
-//   for (int i = 0; i < 22; i++) {
-//     ampCompFrequencyArray[j][i] = sNotePitches[manual_DCO_calibration_start_note + ((i - 1) * calibration_note_interval) - 12] * 100;
-//   }
-//   // for (int i = 0; i < NUM_OSCILLATORS; i++) {
-//   //   ampCompArray[i][0] = 0;
-//   //   ampCompArray[i][1] = initManualAmpCompCalibrationVal;
-//   // }
-//     }
-// }
-
 // Function to precompute the coefficients
 void precomputeCoefficients() {
   for (int j = 0; j < NUM_OSCILLATORS; j++) {

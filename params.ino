@@ -38,6 +38,31 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
 
     case 17:
       oscSync = paramValue;
+      if (oscSync < 2) {
+        for (int i = 0; i < NUM_OSCILLATORS; i++) {
+          pio_sm_put(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pioPulseLength - correctionPioPulseLength);
+          pio_sm_exec(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pio_encode_pull(false, false));
+          pio_sm_exec(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pio_encode_out(pio_y, 31));
+        }
+      } else {
+        if (oscSync > 3) {
+          phaseAlignOSC2 = oscSync;
+        } else {
+          switch (oscSync) {
+            case 2:
+              phaseAlignOSC2 = 134;
+              break;
+            case 3:
+              phaseAlignOSC2 = 179;
+              break;
+            default:
+              break;
+          }
+        }
+        for (int i = 0; i < NUM_OSCILLATORS; i++) {
+          note_on_flag[i] = 1;
+        }
+      }
       break;
 
     case 18:

@@ -6,7 +6,7 @@ void init_ADSR() {
     linToLogLookup[i] = linearToLogarithmic(i, 10, maxADSRControlValue);
   }
 
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);    // initialize attack
     ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);      // initialize decay
     ADSRVoices[i].adsr1_voice.setSustain(ADSR1_sustain);  // initialize sustain
@@ -17,7 +17,7 @@ void init_ADSR() {
 
 inline void ADSR_update() {
   tADSR = millis();
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     if (noteEnd[i] == 1) {
       ADSRVoices[i].adsr1_voice.noteOff(tADSR - 1);
       noteEnd[i] = 0;
@@ -37,7 +37,7 @@ inline void ADSR_update() {
 
 inline void ADSR_set_parameters() {
   if ((tADSR - tADSR_params) > 5) {
-    for (int i = 0; i < NUM_VOICES; i++) {
+    for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
       ADSRVoices[i].adsr1_voice.setSustain(ADSR1_sustain);
     }
     tADSR_params = tADSR;
@@ -45,13 +45,13 @@ inline void ADSR_set_parameters() {
 }
 
 void ADSR1_set_restart() {
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     ADSRVoices[i].adsr1_voice.setResetAttack(ADSRRestart);
   }
 }
 
 void ADSR1_change_curves() {
-  for (int i = 0; i < NUM_VOICES; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     //ADSRVoices[i].adsr1_voice.changeCurves(ADSR_1_DACSIZE, ADSR1_curve1, ADSR1_curve2);
     ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);    // initialize attack
     ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);      // initialize decay
