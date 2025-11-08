@@ -1,4 +1,25 @@
 #include "include_all.h"
+
+#ifdef RUNNING_AVERAGE
+// RunningAverage object definitions for timing measurements
+RunningAverage ra_pitchbend(2000);
+RunningAverage ra_osc2_detune(2000);
+RunningAverage ra_portamento(2000);
+RunningAverage ra_adsr_modifier(2000);
+RunningAverage ra_unison_modifier(2000);
+RunningAverage ra_drift_modifier(2000);
+RunningAverage ra_modifiers_combination(2000);
+RunningAverage ra_freq_scaling(2000);
+RunningAverage ra_interpolate_pitch(2000);
+RunningAverage ra_get_chan_level(2000);
+RunningAverage ra_pwm_calculations(2000);
+RunningAverage ra_voice_task_total(2000);
+RunningAverage ra_clk_div_calc(2000);
+
+unsigned long last_timing_print = 0;
+const unsigned long TIMING_PRINT_INTERVAL = 5000; // Print every 5 seconds
+#endif
+
 void init_voices() {
 
   for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
@@ -8,20 +29,35 @@ void init_voices() {
   initMultiplierTables();
   setVoiceMode();
   voice_task();
+
+#ifdef RUNNING_AVERAGE
+  // Clear all running averages
+  ra_pitchbend.clear();
+  ra_osc2_detune.clear();
+  ra_portamento.clear();
+  ra_adsr_modifier.clear();
+  ra_unison_modifier.clear();
+  ra_drift_modifier.clear();
+  ra_modifiers_combination.clear();
+  ra_freq_scaling.clear();
+  ra_interpolate_pitch.clear();
+  ra_get_chan_level.clear();
+  ra_pwm_calculations.clear();
+  ra_voice_task_total.clear();
+  ra_clk_div_calc.clear();
+#endif
 }
 
 inline void voice_task() {
-  // unsigned long voice_task_1_time;
-  // unsigned long voice_task_2_time;
-  // unsigned long voice_task_3_time;
-  // unsigned long voice_task_4_time;
-  // unsigned long voice_task_total_time;
-  // unsigned long voice_task_start_time = micros();
-
-  // Serial.println("VOICE TASK 1");
+#ifdef RUNNING_AVERAGE
+  unsigned long voice_task_start_time = micros();
+#endif
 
   float calcPitchbend;
 
+#ifdef RUNNING_AVERAGE
+  unsigned long t_start = micros();
+#endif
   if (midi_pitch_bend == 8192) {
     calcPitchbend = 0.0f;
   } else {
@@ -31,6 +67,9 @@ inline void voice_task() {
       calcPitchbend = (((float)midi_pitch_bend / 8192.99f) - 1.0f) * pitchBendMultiplier;
     }
   }
+#ifdef RUNNING_AVERAGE
+  ra_pitchbend.addValue((float)(micros() - t_start));
+#endif
 
   last_midi_pitch_bend = midi_pitch_bend;
   LAST_DETUNE = DETUNE;
@@ -52,11 +91,17 @@ inline void voice_task() {
         note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
       }
 
+#ifdef RUNNING_AVERAGE
+      unsigned long t_osc2 = micros();
+#endif
       if (OSC2DetuneVal == 256) {
         OSC2_detune = 1;
       } else {
         OSC2_detune = 1.00f + (0.0002f * ((int)256 - OSC2DetuneVal));
       }
+#ifdef RUNNING_AVERAGE
+      ra_osc2_detune.addValue((float)(micros() - t_osc2));
+#endif
 
       register float freq;
       register float freq2;
@@ -66,6 +111,9 @@ inline void voice_task() {
 
       // Serial.println("VOICE TASK 2");
       ////***********************    PORTAMENTO CODE   ****************************************/////
+#ifdef RUNNING_AVERAGE
+      unsigned long t_portamento = micros();
+#endif
       if (portamento_time > 0 /*&& portamento_start != 0 && portamento_stop != 0*/) {
         portamentoTimer[i] = micros() - portamentoStartMicros[i];
 
@@ -110,6 +158,9 @@ inline void voice_task() {
         portamento_start[DCO_B] = freq2;
         portamento_stop[DCO_B] = freq2;
       }
+#ifdef RUNNING_AVERAGE
+      ra_portamento.addValue((float)(micros() - t_portamento));
+#endif
       ////***********************    PORTAMENTO CODE  END    ****************************************/////
 
       // Serial.println("VOICE TASK 3");
@@ -160,23 +211,47 @@ inline void voice_task() {
         DETUNE_DRIFT_OSC2 = (float)((float)LFO_DRIFT_LEVEL[DCO_B] * 0.0000005f * analogDrift);
       }
 */
+#ifdef RUNNING_AVERAGE
+      unsigned long t_adsr = micros();
+#endif
       float ADSRModifier = (ADSR1toDETUNE1 != 0) ? ((float)linToLogLookup[ADSR1Level[i]] * ADSR1toDETUNE1_formula) : 0;
       float ADSRModifierOSC1 = (ADSR3ToOscSelect == 0 || ADSR3ToOscSelect == 2) ? ADSRModifier : 0;
       float ADSRModifierOSC2 = (ADSR3ToOscSelect == 1 || ADSR3ToOscSelect == 2) ? ADSRModifier : 0;
+#ifdef RUNNING_AVERAGE
+      ra_adsr_modifier.addValue((float)(micros() - t_adsr));
+      unsigned long t_unison = micros();
+#endif
 
       float unisonMODIFIER = (unisonDetune != 0) ? (0.00006f * unisonDetune * ((i & 0x01) == 0 ? -(i - 1) : -i)) : 0;
+#ifdef RUNNING_AVERAGE
+      ra_unison_modifier.addValue((float)(micros() - t_unison));
+      unsigned long t_drift = micros();
+#endif
 
       float DETUNE_DRIFT_OSC1 = (analogDrift != 0) ? (LFO_DRIFT_LEVEL[DCO_A] * 0.0000005f * analogDrift) : 0;
       float DETUNE_DRIFT_OSC2 = (analogDrift != 0) ? (LFO_DRIFT_LEVEL[DCO_B] * 0.0000005f * analogDrift) : 0;
+#ifdef RUNNING_AVERAGE
+      ra_drift_modifier.addValue((float)(micros() - t_drift));
+#endif
 
       /*   Este bloque tardaba 10 microsegundos */
 
+#ifdef RUNNING_AVERAGE
+      unsigned long t_modifiers = micros();
+#endif
       float modifiersAll = DETUNE_INTERNAL_FIFO_float + unisonMODIFIER + calcPitchbend + 1.00001f;
       float freqModifiers = ADSRModifierOSC1 + DETUNE_DRIFT_OSC1 + modifiersAll;
       float freq2Modifiers = (ADSRModifierOSC2 + DETUNE_DRIFT_OSC2 + modifiersAll);
+#ifdef RUNNING_AVERAGE
+      ra_modifiers_combination.addValue((float)(micros() - t_modifiers));
+      unsigned long t_freq_scaling = micros();
+#endif
 
       freq = freq * (float)((float)interpolatePitchMultiplier(freqModifiers) / (float)multiplierTableScale);
       freq2 = freq2 * OSC2_detune * (float)((float)interpolatePitchMultiplier(freq2Modifiers) / (float)multiplierTableScale);
+#ifdef RUNNING_AVERAGE
+      ra_freq_scaling.addValue((float)(micros() - t_freq_scaling));
+#endif
 
       if ((uint16_t)freq > maxFrequency) {
         freq = maxFrequency;
@@ -202,6 +277,9 @@ inline void voice_task() {
 
       // voice_task_3_time = micros() - voice_task_start_time;
 
+#ifdef RUNNING_AVERAGE
+      unsigned long t_clk_div = micros();
+#endif
       register uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz / freq) - eightPioPulseLength);
       if (freq == 0)
         clk_div1 = 0;
@@ -219,11 +297,17 @@ inline void voice_task() {
       }
       if (freq2 == 0)
         clk_div2 = 0;
+#ifdef RUNNING_AVERAGE
+      ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
+#endif
 
       // voice_task_4_time = micros() - voice_task_start_time;
 
       uint16_t chanLevel, chanLevel2;
 
+#ifdef RUNNING_AVERAGE
+      unsigned long t_chan_level = micros();
+#endif
       switch (syncMode) {
         case 0:
           chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
@@ -238,6 +322,9 @@ inline void voice_task() {
           chanLevel2 = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_B);
           break;
       }
+#ifdef RUNNING_AVERAGE
+      ra_get_chan_level.addValue((float)(micros() - t_chan_level));
+#endif
 
       // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
@@ -268,11 +355,17 @@ inline void voice_task() {
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
 
         if (sqr1Status) {
+#ifdef RUNNING_AVERAGE
+          unsigned long t_pwm = micros();
+#endif
           float ADSR1toPW_calculated = (ADSR1toPWM != 0) ? ((float)ADSR1Level[i] / 4.00f * ADSR1toPWM_formula) : 0;
           float LFO2toPW_calculated = (LFO2toPW != 0) ? ((float)LFO2Level * LFO2toPWM_formula) : 0;
           PW_PWM[i] = (uint16_t)constrain((DIV_COUNTER_PW - 1 - LFO2toPW_calculated - PW[0] + ADSR1toPW_calculated), 0, DIV_COUNTER_PW - 1);
           // PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[i], i));
+#ifdef RUNNING_AVERAGE
+          ra_pwm_calculations.addValue((float)(micros() - t_pwm));
+#endif
         } else {
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
         }
@@ -282,6 +375,17 @@ inline void voice_task() {
     }
     note_on_flag_flag[i] = false;
   }
+
+#ifdef RUNNING_AVERAGE
+  ra_voice_task_total.addValue((float)(micros() - voice_task_start_time));
+  
+  // Print timing statistics periodically
+  unsigned long current_time = millis();
+  if (current_time - last_timing_print >= TIMING_PRINT_INTERVAL) {
+    print_voice_task_timings();
+    last_timing_print = current_time;
+  }
+#endif
 
   // Serial.println("VOICE TASK 14");
   //   voice_task_total_time = micros() - voice_task_start_time;
@@ -508,6 +612,8 @@ inline void setVoiceMode() {
 
 // Uses non linear interpolation and coefficients
 inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
+  // Note: Timing is measured at the call site in voice_task() for total lookup time
+  // This includes both OSC1 and OSC2 lookups per voice iteration
 
   // Check if x is out of bounds
   if (x <= ampCompFrequencyArray[voiceN][0]) {
@@ -839,12 +945,21 @@ void voice_task_debug() {
 }
 
 inline int32_t interpolatePitchMultiplier(float x_float) {
+#ifdef RUNNING_AVERAGE
+  unsigned long t_interp = micros();
+#endif
   int32_t x = (int32_t)(x_float * (float)multiplierTableScale);
   // Check if x is out of bounds
   if (x <= xMultiplierTable[0]) {
+#ifdef RUNNING_AVERAGE
+    ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+#endif
     return yMultiplierTable[0];
   }
   if (x >= xMultiplierTable[multiplierTableSize - 1]) {
+#ifdef RUNNING_AVERAGE
+    ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+#endif
     return yMultiplierTable[multiplierTableSize - 1];
   }
 
@@ -870,6 +985,9 @@ inline int32_t interpolatePitchMultiplier(float x_float) {
   int32_t y1 = yMultiplierTable[low + 1];
 
   int32_t y = y0 + ((y1 - y0) * (x - x0) / (x1 - x0));
+#ifdef RUNNING_AVERAGE
+  ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+#endif
   return y;
 }
 
@@ -898,3 +1016,49 @@ void initMultiplierTables() {
     yMultiplierTable[i] = (int32_t)(y_value * (double)multiplierTableScale);
   }
 }
+
+#ifdef RUNNING_AVERAGE
+void print_voice_task_timings() {
+  Serial.println("\n=== VOICE_TASK TIMING STATISTICS (microseconds) ===");
+  Serial.print("Pitch Bend Calc:      "); 
+  if (ra_pitchbend.getCount() > 0) Serial.println(ra_pitchbend.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("OSC2 Detune:          "); 
+  if (ra_osc2_detune.getCount() > 0) Serial.println(ra_osc2_detune.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Portamento:           "); 
+  if (ra_portamento.getCount() > 0) Serial.println(ra_portamento.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("ADSR Modifier:        "); 
+  if (ra_adsr_modifier.getCount() > 0) Serial.println(ra_adsr_modifier.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Unison Modifier:      "); 
+  if (ra_unison_modifier.getCount() > 0) Serial.println(ra_unison_modifier.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Drift Modifier:       "); 
+  if (ra_drift_modifier.getCount() > 0) Serial.println(ra_drift_modifier.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Modifiers Combination:"); 
+  if (ra_modifiers_combination.getCount() > 0) Serial.println(ra_modifiers_combination.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Freq Scaling:         "); 
+  if (ra_freq_scaling.getCount() > 0) Serial.println(ra_freq_scaling.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Interpolate Pitch:    "); 
+  if (ra_interpolate_pitch.getCount() > 0) Serial.println(ra_interpolate_pitch.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Get Chan Level:       "); 
+  if (ra_get_chan_level.getCount() > 0) Serial.println(ra_get_chan_level.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Clock Div Calc:       "); 
+  if (ra_clk_div_calc.getCount() > 0) Serial.println(ra_clk_div_calc.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("PWM Calculations:     "); 
+  if (ra_pwm_calculations.getCount() > 0) Serial.println(ra_pwm_calculations.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.print("Voice Task Total:     "); 
+  if (ra_voice_task_total.getCount() > 0) Serial.println(ra_voice_task_total.getFastAverage(), 2); else Serial.println("N/A");
+  
+  Serial.println("===================================================\n");
+}
+#endif

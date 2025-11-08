@@ -2,7 +2,12 @@
 #ifndef __VOICES_H__
 #define __VOICES_H__
 
+#ifdef RUNNING_AVERAGE
+#include "RunningAverage.h"
+#endif
+
 void init_voices();
+void print_voice_task_timings();
 
 volatile bool note_on_flag_flag[NUM_VOICES_TOTAL];
 
@@ -55,5 +60,22 @@ static const uint16_t maxFrequency = 4000;
 
 // uint16_t chanLevel[NUM_VOICES];
 // uint16_t chanLevel2[NUM_VOICES];
+
+#ifdef RUNNING_AVERAGE
+// RunningAverage objects for timing measurements (2000 samples each)
+extern RunningAverage ra_pitchbend;
+extern RunningAverage ra_osc2_detune;
+extern RunningAverage ra_portamento;
+extern RunningAverage ra_adsr_modifier;
+extern RunningAverage ra_unison_modifier;
+extern RunningAverage ra_drift_modifier;
+extern RunningAverage ra_modifiers_combination;
+extern RunningAverage ra_freq_scaling;
+extern RunningAverage ra_interpolate_pitch;
+extern RunningAverage ra_get_chan_level;
+extern RunningAverage ra_pwm_calculations;
+extern RunningAverage ra_voice_task_total;
+extern RunningAverage ra_clk_div_calc;
+#endif
 
 #endif

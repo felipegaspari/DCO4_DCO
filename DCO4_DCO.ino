@@ -42,19 +42,11 @@
 
 // #include "irq_tuner.h"
 
-//#define RUNNING_AVERAGE
+#define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"
-RunningAverage myRA(2000);
-/* USAGE:
-unsigned long a;
-unsigned long b;
-a = micros();
-b = micros();
-myRA.addValue(b - a);
-Serial.println(U.getAverage());
-*/
+// Note: RunningAverage objects for voice_task timing are defined in voices.ino
 #endif
 
 // ****************************************************************************************** //
@@ -148,9 +140,6 @@ void loop() {
 void loop1() {
   // unsigned long loop1_start_time = micros();
   // unsigned long loop1_total_time;
-      unsigned long a;
-      unsigned long b;
-      a = micros();
 
   millisTimer();
 
@@ -193,11 +182,4 @@ void loop1() {
     //  }
     // Serial.println("loop1");
   }
-
-#ifdef RUNNING_AVERAGE
-      b = micros();
-      myRA.addValue(b - a);
-      Serial.println(myRA.getAverage());
-#endif
-
 }
