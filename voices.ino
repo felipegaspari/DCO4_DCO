@@ -1062,7 +1062,7 @@ void print_voice_task_timings() {
   if (ra_pwm_calculations.getCount() > 0) Serial.println(ra_pwm_calculations.getFastAverage(), 2); else Serial.println("N/A");
   
   Serial.print("Voice Task Total:     "); 
-  if (ra_voice_task_total.getCount() > 0) Serial.println(ra_voice_task_total.getFastAverage(), 2); Serial.print(" avg, max "); Serial.println(voice_task_max_time); else Serial.println("N/A");
+  Serial.println(ra_voice_task_total.getFastAverage(), 2); Serial.print(" avg, max "); Serial.println(voice_task_max_time);
   
   Serial.println("===================================================\n");
 }
