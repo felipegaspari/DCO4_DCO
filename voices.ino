@@ -17,7 +17,8 @@ RunningAverage ra_voice_task_total(2000);
 RunningAverage ra_clk_div_calc(2000);
 
 unsigned long last_timing_print = 0;
-const unsigned long TIMING_PRINT_INTERVAL = 5000; // Print every 5 seconds
+unsigned long voice_task_max_time = 0;
+const unsigned long TIMING_PRINT_INTERVAL = 1000; // Print every 5 seconds
 #endif
 
 void init_voices() {
@@ -377,8 +378,12 @@ inline void voice_task() {
   }
 
 #ifdef RUNNING_AVERAGE
-  ra_voice_task_total.addValue((float)(micros() - voice_task_start_time));
-  
+  unsigned long voice_task_duration = micros() - voice_task_start_time;
+  ra_voice_task_total.addValue((float)voice_task_duration);
+  if (voice_task_duration > voice_task_max_time) {
+    voice_task_max_time = voice_task_duration;
+  }
+
   // Print timing statistics periodically
   unsigned long current_time = millis();
   if (current_time - last_timing_print >= TIMING_PRINT_INTERVAL) {
@@ -1057,7 +1062,7 @@ void print_voice_task_timings() {
   if (ra_pwm_calculations.getCount() > 0) Serial.println(ra_pwm_calculations.getFastAverage(), 2); else Serial.println("N/A");
   
   Serial.print("Voice Task Total:     "); 
-  if (ra_voice_task_total.getCount() > 0) Serial.println(ra_voice_task_total.getFastAverage(), 2); else Serial.println("N/A");
+  if (ra_voice_task_total.getCount() > 0) Serial.println(ra_voice_task_total.getFastAverage(), 2); Serial.print(" avg, max "); Serial.println(voice_task_max_time); else Serial.println("N/A");
   
   Serial.println("===================================================\n");
 }
