@@ -22,6 +22,18 @@ float portamento_stop[NUM_VOICES_TOTAL * 2];
 float portamento_start[NUM_VOICES_TOTAL * 2];
 float portamento_cur_freq[NUM_VOICES_TOTAL * 2];
 
+// Fixed-point (Q24) equivalents for portamento to reduce float ops in audio loop
+// Per-microsecond step as Q24 (fits in 32-bit)
+int32_t freqPortaInterval_q24[NUM_VOICES_TOTAL * 2];
+int64_t portamento_stop_q24[NUM_VOICES_TOTAL * 2];
+int64_t portamento_start_q24[NUM_VOICES_TOTAL * 2];
+int64_t portamento_cur_freq_q24[NUM_VOICES_TOTAL * 2];
+// Fast 32-bit portamento state in Q16 (Hz * 2^16) to avoid 64-bit muls in audio loop
+int32_t portamento_start_q16[NUM_VOICES_TOTAL * 2];
+int32_t portamento_stop_q16[NUM_VOICES_TOTAL * 2];
+int32_t portamento_cur_freq_q16[NUM_VOICES_TOTAL * 2];
+// per-microsecond step in Q16
+int32_t freqPortaStep_q16[NUM_VOICES_TOTAL * 2];
 uint8_t highestNote = 124;
 
 bool sqr1Status;

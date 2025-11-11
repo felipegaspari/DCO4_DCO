@@ -59,6 +59,7 @@ uint16_t LFO1toDCOVal;
 uint16_t LFO2toVCFVal;
 
 volatile float LFO2toPWM_formula;
+volatile int32_t LFO2toPWM_formula_q24;
 
 void LFO1();
 void LFO2();

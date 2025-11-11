@@ -17,6 +17,7 @@
 // #include <EEPROM.h>
 
 #include "globals.h"
+#include "fixed_types.h"
 
 #include "FS.h"
 

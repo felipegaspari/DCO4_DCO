@@ -132,11 +132,14 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
     case 45:
       LFO2toPW = paramValue;
       LFO2toPWM_formula = (float)1 / 512 * LFO2toPW;
+      LFO2toPWM_formula_q24 = ((int32_t)LFO2toPW << 24) / 512;
       break;
 
     case 46:
       ADSR1toPWM = paramValue - 512;
       ADSR1toPWM_formula = (float)1 / 512 * ADSR1toPWM;
+      // Bake the /4 factor used at call site into the fixed-point formula (512*4 = 2048)
+      ADSR1toPWM_formula_q24 = ((int32_t)ADSR1toPWM << 24) / 2048;
       break;
 
     case 47:

@@ -19,6 +19,8 @@
 // #include <SingleFileDrive.h>
 // #include <EEPROM.h>
 
+#include "fixed_types.h"
+
 #include "globals.h"
 
 #include "FS.h"
@@ -89,7 +91,7 @@ void setup1() {
   init_FS();
 
   init_ADSR();
-  
+
   precomputeCoefficients();
 
   calibrationFlag = false;
@@ -164,6 +166,7 @@ void loop1() {
       ADSR_update();
       rp2040.fifo.pop_nb(detune_fifo_variable);
       memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);
+      DETUNE_INTERNAL_FIFO_q24 = (int32_t)(DETUNE_INTERNAL_FIFO_float * (float)(1 << 24));
 
       loop1_microsLast = loop1_micros;
     }

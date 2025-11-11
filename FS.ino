@@ -24,7 +24,13 @@ void init_FS() {
     for (int datasetIndex = 0; datasetIndex < NUM_OSCILLATORS; ++datasetIndex) {
         for (int pairIndex = 0; pairIndex < chanLevelVoiceDataSize / 2; ++pairIndex) {
             int rawIndex = datasetIndex * chanLevelVoiceDataSize + pairIndex * 2;
-            ampCompFrequencyArray[datasetIndex][pairIndex] = freq_to_amp_comp_array[rawIndex];
+            // Stored frequencies are in Hz*100; convert to fixed-point Hz (Hz * 2^FREQ_FRAC_BITS)
+            int32_t freq_x100 = freq_to_amp_comp_array[rawIndex];
+            int64_t scaled = (int64_t)freq_x100 * (1LL << FREQ_FRAC_BITS); // use 64-bit to avoid overflow
+            int32_t freq_fx = (scaled >= 0)
+                                ? (int32_t)((scaled + 50LL) / 100LL)    // round to nearest
+                                : (int32_t)(-((( -scaled) + 50LL) / 100LL));
+            ampCompFrequencyArray[datasetIndex][pairIndex] = freq_fx;
             ampCompArray[datasetIndex][pairIndex] = freq_to_amp_comp_array[rawIndex + 1];
         }
     }

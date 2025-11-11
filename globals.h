@@ -29,9 +29,9 @@ static constexpr uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
 static constexpr uint32_t eightPioPulseLength = pioPulseLength / 8;
 static constexpr uint32_t correctionPioPulseLength = 7;
 
-static constexpr float halfSysClock_Hz = sysClock_Hz / 2;
-static constexpr float eightSysClock_Hz = sysClock_Hz / 8;
-static constexpr float eightSysClockMinusPulseLength_Hz = (double)(sysClock_Hz - pioPulseLength - 8) / (double)8;
+static constexpr uint32_t halfSysClock_Hz = sysClock_Hz / 2;
+static constexpr uint32_t eightSysClock_Hz_u = sysClock_Hz / 8;
+static constexpr uint32_t eightSysClockMinusPulseLength_Hz_u = (sysClock_Hz - pioPulseLength - 8) / 8;
 
 
 uint32_t loop0_micros;
@@ -61,7 +61,9 @@ volatile float DETUNE_INTERNAL2 = 1;
 uint32_t DETUNE_INTERNAL_FIFO = 1;
 float DETUNE_INTERNAL_FIFO_float = 1;
 uint32_t* detune_fifo_variable = &DETUNE_INTERNAL_FIFO;
+int32_t DETUNE_INTERNAL_FIFO_q24 = (1 << 24);
 float BASE_NOTE = 440.0f;
+
 
 // WEACT RP2040:
 static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 29, 27, 19, 18, 15, 13, 12, 8 };
