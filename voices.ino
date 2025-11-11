@@ -115,52 +115,75 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_portamento = micros();
 #endif
-      ////***********************    PORTAMENTO CODE   ****************************************/////
       if (portamento_time > 0 /*&& portamento_start != 0 && portamento_stop != 0*/) {
-        portamentoTimer[i] = micros() - portamentoStartMicros[i];
+        uint32_t now_us = micros();
+        portamentoTimer[i] = now_us - portamentoStartMicros[i];
 
         if (note_on_flag_flag[i]) {
           // Serial.println("NOTE ON");
-          portamentoStartMicros[i] = micros();
+          portamentoStartMicros[i] = now_us;
 
           portamentoTimer[i] = 0;
 
-          portamento_start[DCO_A] = portamento_cur_freq[DCO_A];
-          portamento_start[DCO_B] = portamento_cur_freq[DCO_B];
+          // Initialize Q24 endpoints (for downstream) and Q16 fast state for runtime stepping
+          portamento_start_q24[DCO_A] = (int64_t)(portamento_cur_freq[DCO_A] * (float)(1 << 24));
+          portamento_start_q24[DCO_B] = (int64_t)(portamento_cur_freq[DCO_B] * (float)(1 << 24));
+          portamento_stop_q24[DCO_A]  = sNotePitches_q24[note1];
+          portamento_stop_q24[DCO_B]  = sNotePitches_q24[note2];
 
-          portamento_stop[DCO_A] = sNotePitches[note1];
-          portamento_stop[DCO_B] = sNotePitches[note2];
+          // Q16 mirrors for fast 32-bit stepping
+          portamento_start_q16[DCO_A] = (int32_t)(portamento_start_q24[DCO_A] >> 8);
+          portamento_start_q16[DCO_B] = (int32_t)(portamento_start_q24[DCO_B] >> 8);
+          portamento_stop_q16[DCO_A]  = (int32_t)(portamento_stop_q24[DCO_A]  >> 8);
+          portamento_stop_q16[DCO_B]  = (int32_t)(portamento_stop_q24[DCO_B]  >> 8);
+          portamento_cur_freq_q16[DCO_A] = portamento_start_q16[DCO_A];
+          portamento_cur_freq_q16[DCO_B] = portamento_start_q16[DCO_B];
 
-          freqPortaInterval[DCO_A] = (float)(portamento_stop[DCO_A] - (float)portamento_start[DCO_A]) / portamento_time;
-          freqPortaInterval[DCO_B] = (float)(portamento_stop[DCO_B] - (float)portamento_start[DCO_B]) / portamento_time;
+          // Per-microsecond step in Q16 (integer division once per glide)
+          if (portamento_time > 0) {
+            freqPortaStep_q16[DCO_A] = (portamento_stop_q16[DCO_A] - portamento_start_q16[DCO_A]) / (int32_t)portamento_time;
+            freqPortaStep_q16[DCO_B] = (portamento_stop_q16[DCO_B] - portamento_start_q16[DCO_B]) / (int32_t)portamento_time;
+          } else {
+            freqPortaStep_q16[DCO_A] = 0;
+            freqPortaStep_q16[DCO_B] = 0;
+          }
         }
 
         if (portamentoTimer[i] > portamento_time) {
-          portamento_cur_freq[DCO_A] = sNotePitches[note1];
-          portamento_start[DCO_A] = portamento_cur_freq[DCO_A];
-          portamento_stop[DCO_A] = portamento_cur_freq[DCO_A];
-          portamento_cur_freq[DCO_B] = sNotePitches[note2];
-          portamento_start[DCO_B] = portamento_cur_freq[DCO_B];
-          portamento_stop[DCO_B] = portamento_cur_freq[DCO_B];
+          // Snap to target
+          portamento_cur_freq_q16[DCO_A] = portamento_stop_q16[DCO_A];
+          portamento_cur_freq_q16[DCO_B] = portamento_stop_q16[DCO_B];
+          portamento_start_q16[DCO_A] = portamento_cur_freq_q16[DCO_A];
+          portamento_start_q16[DCO_B] = portamento_cur_freq_q16[DCO_B];
+          portamento_stop_q16[DCO_A]  = portamento_cur_freq_q16[DCO_A];
+          portamento_stop_q16[DCO_B]  = portamento_cur_freq_q16[DCO_B];
         } else {
-          portamento_cur_freq[DCO_A] = (float)portamento_start[DCO_A] + (float)(freqPortaInterval[DCO_A] * (float)portamentoTimer[i]);
-          portamento_cur_freq[DCO_B] = (float)portamento_start[DCO_B] + (float)(freqPortaInterval[DCO_B] * (float)portamentoTimer[i]);
+          // Absolute-time evaluation (original logic): cur = start + step * elapsed_us (all 32-bit)
+          portamento_cur_freq_q16[DCO_A] = portamento_start_q16[DCO_A] + (int32_t)(freqPortaStep_q16[DCO_A] * (int32_t)portamentoTimer[i]);
+          portamento_cur_freq_q16[DCO_B] = portamento_start_q16[DCO_B] + (int32_t)(freqPortaStep_q16[DCO_B] * (int32_t)portamentoTimer[i]);
         }
 
-        freq = portamento_cur_freq[DCO_A];
-        freq2 = portamento_cur_freq[DCO_B];
+        // Update Q24 mirrors and floats for downstream paths
+        portamento_cur_freq_q24[DCO_A] = ((int64_t)portamento_cur_freq_q16[DCO_A]) << 8;
+        portamento_cur_freq_q24[DCO_B] = ((int64_t)portamento_cur_freq_q16[DCO_B]) << 8;
+        freq  = (float)portamento_cur_freq_q16[DCO_A] * (1.0f / 65536.0f);
+        freq2 = (float)portamento_cur_freq_q16[DCO_B] * (1.0f / 65536.0f);
       } else {
-        freq = (float)sNotePitches[note1];
+        portamento_cur_freq_q24[DCO_A] = sNotePitches_q24[note1];
+        freq = (float)((double)portamento_cur_freq_q24[DCO_A] / (double)(1 << 24));
         portamento_cur_freq[DCO_A] = freq;
         portamento_start[DCO_A] = freq;
         portamento_stop[DCO_A] = freq;
 
-        freq2 = (float)sNotePitches[note2];
+        portamento_cur_freq_q24[DCO_B] = sNotePitches_q24[note2];
+        freq2 = (float)((double)portamento_cur_freq_q24[DCO_B] / (double)(1 << 24));
         portamento_cur_freq[DCO_B] = freq2;
         portamento_start[DCO_B] = freq2;
         portamento_stop[DCO_B] = freq2;
+        // Also store Q24 base for downstream fixed-point clock computations
+        portamento_cur_freq_q24[DCO_A] = (int64_t)(freq * (float)(1 << 24));
+        portamento_cur_freq_q24[DCO_B] = (int64_t)(freq2 * (float)(1 << 24));
       }
-      ////***********************    PORTAMENTO CODE  END    ****************************************/////
 #ifdef RUNNING_AVERAGE
       ra_portamento.addValue((float)(micros() - t_portamento));
 #endif
