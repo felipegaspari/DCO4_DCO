@@ -125,9 +125,9 @@ inline void voice_task() {
 
           portamentoTimer[i] = 0;
 
-          // Initialize Q24 endpoints (for downstream) and Q16 fast state for runtime stepping
-          portamento_start_q24[DCO_A] = (int64_t)(portamento_cur_freq[DCO_A] * (float)(1 << 24));
-          portamento_start_q24[DCO_B] = (int64_t)(portamento_cur_freq[DCO_B] * (float)(1 << 24));
+          // Initialize endpoints using existing fixed-point state (avoid float conversions)
+          portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
+          portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
           portamento_stop_q24[DCO_A]  = sNotePitches_q24[note1];
           portamento_stop_q24[DCO_B]  = sNotePitches_q24[note2];
 
@@ -139,14 +139,16 @@ inline void voice_task() {
           portamento_cur_freq_q16[DCO_A] = portamento_start_q16[DCO_A];
           portamento_cur_freq_q16[DCO_B] = portamento_start_q16[DCO_B];
 
-          // Per-microsecond step in Q16 (integer division once per glide)
-          if (portamento_time > 0) {
-            freqPortaStep_q16[DCO_A] = (portamento_stop_q16[DCO_A] - portamento_start_q16[DCO_A]) / (int32_t)portamento_time;
-            freqPortaStep_q16[DCO_B] = (portamento_stop_q16[DCO_B] - portamento_start_q16[DCO_B]) / (int32_t)portamento_time;
-          } else {
-            freqPortaStep_q16[DCO_A] = 0;
-            freqPortaStep_q16[DCO_B] = 0;
-          }
+          // Per-microsecond step in Q16 with symmetric rounding (computed once per glide)
+          int32_t T = (portamento_time == 0) ? 1 : (int32_t)portamento_time;
+          int64_t dA16 = (int64_t)portamento_stop_q16[DCO_A] - (int64_t)portamento_start_q16[DCO_A];
+          int64_t dB16 = (int64_t)portamento_stop_q16[DCO_B] - (int64_t)portamento_start_q16[DCO_B];
+          int64_t halfT = (int64_t)T >> 1;
+          int64_t numA = (dA16 >= 0) ? (dA16 + halfT) : (dA16 - halfT);
+          int64_t numB = (dB16 >= 0) ? (dB16 + halfT) : (dB16 - halfT);
+          // Results fit 32-bit for practical T and 6 kHz band; computed at note-on only
+          freqPortaStep_q16[DCO_A] = (int32_t)(numA / T);
+          freqPortaStep_q16[DCO_B] = (int32_t)(numB / T);
         }
 
         if (portamentoTimer[i] > portamento_time) {
@@ -170,19 +172,22 @@ inline void voice_task() {
         freq2 = (float)portamento_cur_freq_q16[DCO_B] * (1.0f / 65536.0f);
       } else {
         portamento_cur_freq_q24[DCO_A] = sNotePitches_q24[note1];
-        freq = (float)((double)portamento_cur_freq_q24[DCO_A] / (double)(1 << 24));
+        portamento_cur_freq_q16[DCO_A] = (int32_t)(portamento_cur_freq_q24[DCO_A] >> 8);
+        freq = (float)portamento_cur_freq_q16[DCO_A] * (1.0f / 65536.0f);
         portamento_cur_freq[DCO_A] = freq;
         portamento_start[DCO_A] = freq;
         portamento_stop[DCO_A] = freq;
+        portamento_start_q16[DCO_A] = portamento_cur_freq_q16[DCO_A];
+        portamento_stop_q16[DCO_A]  = portamento_cur_freq_q16[DCO_A];
 
         portamento_cur_freq_q24[DCO_B] = sNotePitches_q24[note2];
-        freq2 = (float)((double)portamento_cur_freq_q24[DCO_B] / (double)(1 << 24));
+        portamento_cur_freq_q16[DCO_B] = (int32_t)(portamento_cur_freq_q24[DCO_B] >> 8);
+        freq2 = (float)portamento_cur_freq_q16[DCO_B] * (1.0f / 65536.0f);
         portamento_cur_freq[DCO_B] = freq2;
         portamento_start[DCO_B] = freq2;
         portamento_stop[DCO_B] = freq2;
-        // Also store Q24 base for downstream fixed-point clock computations
-        portamento_cur_freq_q24[DCO_A] = (int64_t)(freq * (float)(1 << 24));
-        portamento_cur_freq_q24[DCO_B] = (int64_t)(freq2 * (float)(1 << 24));
+        portamento_start_q16[DCO_B] = portamento_cur_freq_q16[DCO_B];
+        portamento_stop_q16[DCO_B]  = portamento_cur_freq_q16[DCO_B];
       }
 #ifdef RUNNING_AVERAGE
       ra_portamento.addValue((float)(micros() - t_portamento));
