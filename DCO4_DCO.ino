@@ -3,6 +3,15 @@
 // #include <stdlib.h>
 // #include <math.h>
 
+#define RUNNING_AVERAGE
+
+#ifdef RUNNING_AVERAGE
+#include "RunningAverage.h"
+// Note: RunningAverage objects for voice_task timing are defined in voices.ino
+#endif
+
+#define PITCH_INTERP_USE_Q12
+#define PITCH_USE_RATIO_Q16 1
 
 #include <Adafruit_TinyUSB.h>
 #include <MIDI.h>
@@ -44,12 +53,7 @@
 
 // #include "irq_tuner.h"
 
-//#define RUNNING_AVERAGE
 
-#ifdef RUNNING_AVERAGE
-#include "RunningAverage.h"
-// Note: RunningAverage objects for voice_task timing are defined in voices.ino
-#endif
 
 // ****************************************************************************************** //
 

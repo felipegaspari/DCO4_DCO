@@ -32,6 +32,8 @@ static constexpr uint32_t correctionPioPulseLength = 7;
 static constexpr uint32_t halfSysClock_Hz = sysClock_Hz / 2;
 static constexpr uint32_t eightSysClock_Hz_u = sysClock_Hz / 8;
 static constexpr uint32_t eightSysClockMinusPulseLength_Hz_u = (sysClock_Hz - pioPulseLength - 8) / 8;
+// Q24-scaled clock constants to avoid per-loop shifts
+// (removed) Q24-scaled clock constants; direct shift used at call-site
 
 
 uint32_t loop0_micros;
@@ -48,6 +50,7 @@ uint8_t oscSync = 0;
 volatile uint8_t polyMode = 1;
 
 uint16_t phaseAlignOSC2;
+// (removed) phaseAlignScale_Q16; use direct computation at call-site
 
 uint8_t unisonDetune = 10;
 uint8_t analogDrift = 0;

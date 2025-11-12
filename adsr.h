@@ -116,6 +116,7 @@ bool ADSRRestart = true;
 int16_t ADSR1toDETUNE1;
 
 float ADSR1toDETUNE1_formula;
+int32_t ADSR1toDETUNE1_scale_q24;
 
 int16_t ADSR1toPWM;
 float ADSR1toPWM_formula;

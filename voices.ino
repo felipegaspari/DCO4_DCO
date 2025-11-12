@@ -1,5 +1,12 @@
 #include "include_all.h"
 
+// Simple optimization: cache last raw divider and reuse while it remains valid.
+// Validity check uses multiplication inequalities; no divides in steady state.
+static uint32_t last_raw_eight[NUM_OSCILLATORS] = {0xFFFFFFFF};
+static uint32_t last_raw_sys[NUM_OSCILLATORS] = {0xFFFFFFFF};
+
+// (removed) legacy Q16 ratio precompute tables; ratio is derived on the fly now
+
 #ifdef RUNNING_AVERAGE
 // RunningAverage object definitions for timing measurements
 RunningAverage ra_pitchbend(2000);
@@ -7,7 +14,7 @@ RunningAverage ra_osc2_detune(2000);
 RunningAverage ra_portamento(2000);
 RunningAverage ra_adsr_modifier(2000);
 RunningAverage ra_unison_modifier(2000);
-RunningAverage ra_drift_modifier(2000);
+RunningAverage ra_drift_multiplier(2000);
 RunningAverage ra_modifiers_combination(2000);
 RunningAverage ra_freq_scaling(2000);
 RunningAverage ra_interpolate_pitch(2000);
@@ -38,7 +45,7 @@ void init_voices() {
   ra_portamento.clear();
   ra_adsr_modifier.clear();
   ra_unison_modifier.clear();
-  ra_drift_modifier.clear();
+  ra_drift_multiplier.clear();
   ra_modifiers_combination.clear();
   ra_freq_scaling.clear();
   ra_interpolate_pitch.clear();
@@ -104,8 +111,8 @@ inline void voice_task() {
       ra_osc2_detune.addValue((float)(micros() - t_osc2));
 #endif
 
-      register float freq;
-      register float freq2;
+      int64_t freq_q24_A;
+      int64_t freq_q24_B;
 
       uint8_t DCO_A = i * 2;
       uint8_t DCO_B = (i * 2) + 1;
@@ -125,131 +132,67 @@ inline void voice_task() {
 
           portamentoTimer[i] = 0;
 
-          // Initialize endpoints using existing fixed-point state (avoid float conversions)
-          portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
-          portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
-          portamento_stop_q24[DCO_A]  = sNotePitches_q24[note1];
-          portamento_stop_q24[DCO_B]  = sNotePitches_q24[note2];
+          // Derive endpoints directly in Q24
+          int64_t startA_q24 = portamento_cur_freq_q24[DCO_A];
+          int64_t startB_q24 = portamento_cur_freq_q24[DCO_B];
+          int64_t stopA_q24  = sNotePitches_q24[note1];
+          int64_t stopB_q24  = sNotePitches_q24[note2];
+          portamento_start_q24[DCO_A] = startA_q24;
+          portamento_start_q24[DCO_B] = startB_q24;
+          portamento_stop_q24[DCO_A]  = stopA_q24;
+          portamento_stop_q24[DCO_B]  = stopB_q24;
+          portamento_cur_freq_q24[DCO_A] = startA_q24;
+          portamento_cur_freq_q24[DCO_B] = startB_q24;
 
-          // Q16 mirrors for fast 32-bit stepping
-          portamento_start_q16[DCO_A] = (int32_t)(portamento_start_q24[DCO_A] >> 8);
-          portamento_start_q16[DCO_B] = (int32_t)(portamento_start_q24[DCO_B] >> 8);
-          portamento_stop_q16[DCO_A]  = (int32_t)(portamento_stop_q24[DCO_A]  >> 8);
-          portamento_stop_q16[DCO_B]  = (int32_t)(portamento_stop_q24[DCO_B]  >> 8);
-          portamento_cur_freq_q16[DCO_A] = portamento_start_q16[DCO_A];
-          portamento_cur_freq_q16[DCO_B] = portamento_start_q16[DCO_B];
-
-          // Per-microsecond step in Q16 with symmetric rounding (computed once per glide)
+          // Per-microsecond step in Q24 with symmetric rounding (computed once per glide)
           int32_t T = (portamento_time == 0) ? 1 : (int32_t)portamento_time;
-          int64_t dA16 = (int64_t)portamento_stop_q16[DCO_A] - (int64_t)portamento_start_q16[DCO_A];
-          int64_t dB16 = (int64_t)portamento_stop_q16[DCO_B] - (int64_t)portamento_start_q16[DCO_B];
+          int64_t dA = portamento_stop_q24[DCO_A] - portamento_start_q24[DCO_A];
+          int64_t dB = portamento_stop_q24[DCO_B] - portamento_start_q24[DCO_B];
           int64_t halfT = (int64_t)T >> 1;
-          int64_t numA = (dA16 >= 0) ? (dA16 + halfT) : (dA16 - halfT);
-          int64_t numB = (dB16 >= 0) ? (dB16 + halfT) : (dB16 - halfT);
-          // Results fit 32-bit for practical T and 6 kHz band; computed at note-on only
-          freqPortaStep_q16[DCO_A] = (int32_t)(numA / T);
-          freqPortaStep_q16[DCO_B] = (int32_t)(numB / T);
+          int64_t numA = (dA >= 0) ? (dA + halfT) : (dA - halfT);
+          int64_t numB = (dB >= 0) ? (dB + halfT) : (dB - halfT);
+          freqPortaStep_q24[DCO_A] = (numA / (int64_t)T);
+          freqPortaStep_q24[DCO_B] = (numB / (int64_t)T);
         }
 
         if (portamentoTimer[i] > portamento_time) {
           // Snap to target
-          portamento_cur_freq_q16[DCO_A] = portamento_stop_q16[DCO_A];
-          portamento_cur_freq_q16[DCO_B] = portamento_stop_q16[DCO_B];
-          portamento_start_q16[DCO_A] = portamento_cur_freq_q16[DCO_A];
-          portamento_start_q16[DCO_B] = portamento_cur_freq_q16[DCO_B];
-          portamento_stop_q16[DCO_A]  = portamento_cur_freq_q16[DCO_A];
-          portamento_stop_q16[DCO_B]  = portamento_cur_freq_q16[DCO_B];
+          portamento_cur_freq_q24[DCO_A] = portamento_stop_q24[DCO_A];
+          portamento_cur_freq_q24[DCO_B] = portamento_stop_q24[DCO_B];
+          portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
+          portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
+          portamento_stop_q24[DCO_A]  = portamento_cur_freq_q24[DCO_A];
+          portamento_stop_q24[DCO_B]  = portamento_cur_freq_q24[DCO_B];
         } else {
-          // Absolute-time evaluation (original logic): cur = start + step * elapsed_us (all 32-bit)
-          portamento_cur_freq_q16[DCO_A] = portamento_start_q16[DCO_A] + (int32_t)(freqPortaStep_q16[DCO_A] * (int32_t)portamentoTimer[i]);
-          portamento_cur_freq_q16[DCO_B] = portamento_start_q16[DCO_B] + (int32_t)(freqPortaStep_q16[DCO_B] * (int32_t)portamentoTimer[i]);
+          // Absolute-time base in Q24
+          int32_t elapsed_us = (int32_t)portamentoTimer[i];
+          int64_t curA = portamento_start_q24[DCO_A] + freqPortaStep_q24[DCO_A] * (int64_t)elapsed_us;
+          int64_t curB = portamento_start_q24[DCO_B] + freqPortaStep_q24[DCO_B] * (int64_t)elapsed_us;
+          portamento_cur_freq_q24[DCO_A] = curA;
+          portamento_cur_freq_q24[DCO_B] = curB;
         }
-
-        // Update Q24 mirrors and floats for downstream paths
-        portamento_cur_freq_q24[DCO_A] = ((int64_t)portamento_cur_freq_q16[DCO_A]) << 8;
-        portamento_cur_freq_q24[DCO_B] = ((int64_t)portamento_cur_freq_q16[DCO_B]) << 8;
-        freq  = (float)portamento_cur_freq_q16[DCO_A] * (1.0f / 65536.0f);
-        freq2 = (float)portamento_cur_freq_q16[DCO_B] * (1.0f / 65536.0f);
       } else {
         portamento_cur_freq_q24[DCO_A] = sNotePitches_q24[note1];
-        portamento_cur_freq_q16[DCO_A] = (int32_t)(portamento_cur_freq_q24[DCO_A] >> 8);
-        freq = (float)portamento_cur_freq_q16[DCO_A] * (1.0f / 65536.0f);
-        portamento_cur_freq[DCO_A] = freq;
-        portamento_start[DCO_A] = freq;
-        portamento_stop[DCO_A] = freq;
-        portamento_start_q16[DCO_A] = portamento_cur_freq_q16[DCO_A];
-        portamento_stop_q16[DCO_A]  = portamento_cur_freq_q16[DCO_A];
+        portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
+        portamento_stop_q24[DCO_A]  = portamento_cur_freq_q24[DCO_A];
 
         portamento_cur_freq_q24[DCO_B] = sNotePitches_q24[note2];
-        portamento_cur_freq_q16[DCO_B] = (int32_t)(portamento_cur_freq_q24[DCO_B] >> 8);
-        freq2 = (float)portamento_cur_freq_q16[DCO_B] * (1.0f / 65536.0f);
-        portamento_cur_freq[DCO_B] = freq2;
-        portamento_start[DCO_B] = freq2;
-        portamento_stop[DCO_B] = freq2;
-        portamento_start_q16[DCO_B] = portamento_cur_freq_q16[DCO_B];
-        portamento_stop_q16[DCO_B]  = portamento_cur_freq_q16[DCO_B];
+        portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
+        portamento_stop_q24[DCO_B]  = portamento_cur_freq_q24[DCO_B];
       }
 #ifdef RUNNING_AVERAGE
       ra_portamento.addValue((float)(micros() - t_portamento));
 #endif
       ////***********************    PORTAMENTO CODE  END    ****************************************/////
 
-      // Serial.println("VOICE TASK 3");
-      // voice_task_1_time = micros() - voice_task_start_time;
-
-      /* OLD CODE
-      float ADSRModifier;
-      float ADSRModifierOSC1;
-      float ADSRModifierOSC2;
-
-      if (ADSR1toDETUNE1 != 0) {
-        ADSRModifier = (float)ADSR1Level[i] * ADSR1toDETUNE1_formula;
-        switch (ADSR3ToOscSelect) {
-          case 0:
-            ADSRModifierOSC1 = ADSRModifier;
-            ADSRModifierOSC2 = 0;
-            break;
-          case 1:
-            ADSRModifierOSC1 = 0;
-            ADSRModifierOSC2 = ADSRModifier;
-            break;
-          case 2:
-            ADSRModifierOSC1 = ADSRModifier;
-            ADSRModifierOSC2 = ADSRModifier;
-            break;
-        }
-      } else {
-        ADSRModifier = 0;
-        ADSRModifierOSC1 = 0;
-        ADSRModifierOSC2 = 0;
-      }
-
-      float unisonMODIFIER = 0;
-      if (unisonDetune != 0) {
-        unisonMODIFIER = (0.00006f * unisonDetune);
-        if ((i & 0x01) == 0) {
-          unisonMODIFIER = 0 - (unisonMODIFIER * (i - 1));
-        } else {
-          unisonMODIFIER = 0 - (unisonMODIFIER * i);
-        }
-      }
-
-      float DETUNE_DRIFT_OSC1 = 0;
-      float DETUNE_DRIFT_OSC2 = 0;
-
-      if (analogDrift != 0) {
-        DETUNE_DRIFT_OSC1 = (float)((float)LFO_DRIFT_LEVEL[DCO_A] * 0.0000005f * analogDrift);
-        DETUNE_DRIFT_OSC2 = (float)((float)LFO_DRIFT_LEVEL[DCO_B] * 0.0000005f * analogDrift);
-      }
-*/
 #ifdef RUNNING_AVERAGE
       unsigned long t_adsr = micros();
 #endif
       // Fixed-point ADSR modifier in Q24: ((linToLog * ADSR1toDETUNE1) / 1080000)
       int64_t ADSRModifier_q24 = 0;
       if (ADSR1toDETUNE1 != 0) {
-        int64_t prod = (int64_t)linToLogLookup[ADSR1Level[i]] * (int16_t)ADSR1toDETUNE1;
-        ADSRModifier_q24 = (prod << 24) / 1080000;
+        // Use precomputed Q24 scale: ADSR1toDETUNE1_scale_q24 = round(ADSR1toDETUNE1 * 2^24 / 1080000)
+        ADSRModifier_q24 = (int64_t)linToLogLookup[ADSR1Level[i]] * (int32_t)ADSR1toDETUNE1_scale_q24;
       }
       int64_t ADSRModifierOSC1_q24 = (ADSR3ToOscSelect == 0 || ADSR3ToOscSelect == 2) ? ADSRModifier_q24 : 0;
       int64_t ADSRModifierOSC2_q24 = (ADSR3ToOscSelect == 1 || ADSR3ToOscSelect == 2) ? ADSRModifier_q24 : 0;
@@ -259,8 +202,11 @@ inline void voice_task() {
 #endif
 
       // Fixed-point unison modifier in Q24: 0.00006 * unisonDetune * step
-      static constexpr int32_t UNISON_SCALE_Q24 = (int32_t)(0.00006f * (float)(1 << 24) + 0.5f);
-      int32_t unisonStep = ((i & 0x01) == 0 ? -(i - 1) : -i);
+      static constexpr int32_t UNISON_SCALE_Q24 = (int32_t)(0.0001f * (float)(1 << 24) + 0.5f);
+      // Voice-indexed alternating pattern: +1, -1, +2, -2, +3, -3, ...
+      int32_t mag = (i >> 1) + 1;
+      int32_t sign = ((i & 0x01) == 0) ? 1 : -1;
+      int32_t unisonStep = sign * mag;
       int64_t unisonMODIFIER_q24 = (int64_t)unisonDetune * (int64_t)UNISON_SCALE_Q24 * (int64_t)unisonStep;
 #ifdef RUNNING_AVERAGE
       ra_unison_modifier.addValue((float)(micros() - t_unison));
@@ -273,7 +219,7 @@ inline void voice_task() {
       int64_t DETUNE_DRIFT_OSC1_q24 = (analogDrift != 0) ? ((int64_t)LFO_DRIFT_LEVEL[DCO_A] * (int64_t)driftScale_q24) : 0;
       int64_t DETUNE_DRIFT_OSC2_q24 = (analogDrift != 0) ? ((int64_t)LFO_DRIFT_LEVEL[DCO_B] * (int64_t)driftScale_q24) : 0;
 #ifdef RUNNING_AVERAGE
-      ra_drift_modifier.addValue((float)(micros() - t_drift));
+      ra_drift_multiplier.addValue((float)(micros() - t_drift));
 #endif
 
       /*   Este bloque tardaba 10 microsegundos */
@@ -281,47 +227,58 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_modifiers = micros();
 #endif
-      // Combine modifiers in Q24 and convert to float once for downstream
+      // Combine modifiers in Q24 (faithful to original float path)
       int32_t detune_fifo_q24 = DETUNE_INTERNAL_FIFO_q24;
       int32_t calcPitchbend_q24 = (int32_t)(calcPitchbend * (float)(1 << 24));
-      int32_t one_q24 = (1 << 24);
-      int64_t modifiersAll_q24 = (int64_t)detune_fifo_q24 + unisonMODIFIER_q24 + (int64_t)calcPitchbend_q24 + (int64_t)one_q24;
+      // 1.00001f in Q24 (epsilon ≈ 168 LSBs)
+      // Use detune delta (DETUNE_INTERNAL_FIFO - 1.0) to avoid double baseline
+      int64_t detune_delta_q24 = (int64_t)detune_fifo_q24 - (int64_t)Q24_ONE;
+      int64_t modifiersAll_q24 = detune_delta_q24 + unisonMODIFIER_q24 + (int64_t)calcPitchbend_q24 + (int64_t)Q24_ONE_EPS;
       int64_t freqModifiers_q24 = ADSRModifierOSC1_q24 + DETUNE_DRIFT_OSC1_q24 + modifiersAll_q24;
       int64_t freq2Modifiers_q24 = ADSRModifierOSC2_q24 + DETUNE_DRIFT_OSC2_q24 + modifiersAll_q24;
-      float freqModifiers = (float)((double)freqModifiers_q24 / (double)(1 << 24));
-      float freq2Modifiers = (float)((double)freq2Modifiers_q24 / (double)(1 << 24));
 #ifdef RUNNING_AVERAGE
       ra_modifiers_combination.addValue((float)(micros() - t_modifiers));
       unsigned long t_freq_scaling = micros();
 #endif
 
-      // Use fixed input to interpolation: x_scaled = (q24 * tableScale) >> 24
-      int32_t xScaled1 = (int32_t)((freqModifiers_q24 * (int64_t)multiplierTableScale) >> 24);
-      int32_t xScaled2 = (int32_t)((freq2Modifiers_q24 * (int64_t)multiplierTableScale) >> 24);
-      int32_t yScaled1 = interpolatePitchMultiplier(xScaled1);
-      int32_t yScaled2 = interpolatePitchMultiplier(xScaled2);
-      // Build Q24 frequencies from base Q24 and ratios; apply OSC2 detune in Q24
-      int64_t freq_q24_A = (portamento_cur_freq_q24[DCO_A] * (int64_t)yScaled1) / (int64_t)multiplierTableScale;
-      int64_t freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)yScaled2) / (int64_t)multiplierTableScale;
-      freq_q24_B = (freq_q24_B * (int64_t)detune_q24) >> 24;
-      // Keep float copies for any remaining legacy paths
-      freq = (float)((double)freq_q24_A / (double)(1 << 24));
-      freq2 = (float)((double)freq_q24_B / (double)(1 << 24));
+      // Fast fixed-point equivalent of:
+      //   freq  *= interpolatePitchMultiplier(freqModifiers)/multiplierTableScale;
+      //   freq2 *= OSC2_detune * interpolatePitchMultiplier(freq2Modifiers)/multiplierTableScale;
+      // High-resolution fixed-point x with truncation toward zero (matches original float cast):
+      // xQ16 = trunc((q24 * scale) / 2^8) to carry 16 fractional bits of table-units
+      int64_t x1_q24s = (freqModifiers_q24  * (int64_t)multiplierTableScale); // Q24 * int -> Q24
+      int64_t x2_q24s = (freq2Modifiers_q24 * (int64_t)multiplierTableScale); // Q24 * int -> Q24
+      int32_t xScaled1_Q16 = (x1_q24s >= 0) ? (int32_t)(x1_q24s >> 8) : (int32_t)(- ((-x1_q24s) >> 8));
+      int32_t xScaled2_Q16 = (x2_q24s >= 0) ? (int32_t)(x2_q24s >> 8) : (int32_t)(- ((-x2_q24s) >> 8));
+      #if PITCH_USE_RATIO_Q16
+      int32_t ratio1_Q16 = interpolateRatioQ16_cached(xScaled1_Q16, DCO_A);
+      int32_t ratio2_Q16 = interpolateRatioQ16_cached(xScaled2_Q16, DCO_B);
+      freq_q24_A = (portamento_cur_freq_q24[DCO_A] * (int64_t)ratio1_Q16) >> 16;
+      // Combine OSC2 detune into the ratio to save a multiply:
+      // detune_Q16 = round(detune_q24 / 2^8)
+      int32_t detune_Q16 = (int32_t)((detune_q24 + (1 << 7)) >> 8);
+      // combined_Q16 = round((ratio2_Q16 * detune_Q16) / 2^16)
+      uint64_t prod_r = (uint64_t)(uint32_t)ratio2_Q16 * (uint32_t)detune_Q16;
+      int32_t combined_Q16 = (int32_t)((prod_r + (1ULL << 15)) >> 16);
+      // Single multiply to scale base frequency
+      freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16) >> 16;
+      #else
+      int32_t yTab1 = interpolatePitchMultiplierIntQ16_cached(xScaled1_Q16, DCO_A);
+      int32_t yTab2 = interpolatePitchMultiplierIntQ16_cached(xScaled2_Q16, DCO_B);
+      // Convert multiplier back to Q24 by dividing by multiplierTableScale (integer divide, like original)
+      freq_q24_A = ( (portamento_cur_freq_q24[DCO_A] * (int64_t)yTab1) / (int64_t)multiplierTableScale );
+      int64_t tmpB_q24 = ( (portamento_cur_freq_q24[DCO_B] * (int64_t)yTab2) / (int64_t)multiplierTableScale );
+      // Apply detune in Q24 for maximum precision
+      freq_q24_B = (tmpB_q24 * (int64_t)detune_q24) >> 24;
+      #endif
+
+      // Per-cycle: no caching; compute dividers directly from current Q18 frequency
 
 #ifdef RUNNING_AVERAGE
       ra_freq_scaling.addValue((float)(micros() - t_freq_scaling));
 #endif
 
-      if ((uint16_t)freq > maxFrequency) {
-        freq = maxFrequency;
-      } else if ((uint16_t)freq < 6) {
-        freq = 6;
-      }
-      if ((uint16_t)freq2 >= maxFrequency) {
-        freq2 = maxFrequency;
-      } else if ((uint16_t)freq2 < 6) {
-        freq2 = 6;
-      }
+      // Removed float clamps; downstream uses fixed-point freq_q18/freq_q16
 
       /* FIN */
 
@@ -339,21 +296,27 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_clk_div = micros();
 #endif
-      // Integer clock divider using Q24 frequency: clk_div1 = (eightSysClock_Hz_u << 24)/freq_q24 - eightPioPulseLength
+      // Integer clock divider using direct divide each cycle
       uint32_t clk_div1;
-      if (freq == 0.0f) {
+      if (freq_q24_A <= 0) {
         clk_div1 = 0;
       } else {
-        if (freq_q24_A <= 0) {
-          clk_div1 = 0;
-        } else {
-          clk_div1 = (uint32_t)(((uint64_t)eightSysClock_Hz_u << 24) / (uint64_t)freq_q24_A);
-          if (clk_div1 > eightPioPulseLength) {
-            clk_div1 -= eightPioPulseLength;
+        const uint64_t N_eight = ((uint64_t)eightSysClock_Hz_u << 24);
+        uint32_t prevR = last_raw_eight[DCO_A];
+        uint32_t rawA;
+        if (prevR != 0xFFFFFFFF && prevR != 0) {
+          uint64_t f = (uint64_t)freq_q24_A;
+          if ((f * (uint64_t)prevR) <= N_eight && (f * (uint64_t)(prevR + 1)) > N_eight) {
+            rawA = prevR;
           } else {
-            clk_div1 = 0;
+            rawA = (uint32_t)(N_eight / f);
+            last_raw_eight[DCO_A] = rawA;
           }
+        } else {
+          rawA = (uint32_t)(N_eight / (uint64_t)freq_q24_A);
+          last_raw_eight[DCO_A] = rawA;
         }
+        clk_div1 = (rawA > eightPioPulseLength) ? (rawA - eightPioPulseLength) : 0;
       }
 
       register uint32_t clk_div2;
@@ -361,25 +324,51 @@ inline void voice_task() {
 
       if (oscSync > 1) {
 
-        // clk_div2_raw = (sysClock_Hz << 24)/freq2_q24
-        uint32_t clk_div2_raw = (uint32_t)(((uint64_t)sysClock_Hz << 24) / (uint64_t)freq_q24_B);
+        // clk_div2_raw in Q24
+        uint32_t clk_div2_raw = 0;
+        if (freq_q24_B > 0) {
+          const uint64_t N_sys = ((uint64_t)sysClock_Hz << 24);
+          uint32_t prevRsys = last_raw_sys[DCO_B];
+          if (prevRsys != 0xFFFFFFFF && prevRsys != 0) {
+            uint64_t fB = (uint64_t)freq_q24_B;
+            if ((fB * (uint64_t)prevRsys) <= N_sys && (fB * (uint64_t)(prevRsys + 1)) > N_sys) {
+              clk_div2_raw = prevRsys;
+            } else {
+              clk_div2_raw = (uint32_t)(N_sys / fB);
+              last_raw_sys[DCO_B] = clk_div2_raw;
+            }
+          } else {
+            clk_div2_raw = (uint32_t)(N_sys / (uint64_t)freq_q24_B);
+            last_raw_sys[DCO_B] = clk_div2_raw;
+          }
+        }
         uint32_t base = (clk_div2_raw > pioPulseLength) ? (clk_div2_raw - pioPulseLength) : 0;
         phaseDelay = (uint32_t)(((uint64_t)base * (uint64_t)phaseAlignOSC2) / 180ULL);
         uint32_t adj = (base > phaseDelay) ? (base - phaseDelay) : 0;
         clk_div2 = (uint32_t)(adj / 8U);
       } else {
-        if (freq2 == 0.0f) {
+        if (freq_q24_B <= 0) {
           clk_div2 = 0;
         } else {
-          clk_div2 = (uint32_t)(((uint64_t)eightSysClock_Hz_u << 24) / (uint64_t)freq_q24_B);
-          if (clk_div2 > eightPioPulseLength) {
-            clk_div2 -= eightPioPulseLength;
+          const uint64_t N_eight = ((uint64_t)eightSysClock_Hz_u << 24);
+          uint32_t prevRe = last_raw_eight[DCO_B];
+          uint32_t rawB;
+          if (prevRe != 0xFFFFFFFF && prevRe != 0) {
+            uint64_t fB = (uint64_t)freq_q24_B;
+            if ((fB * (uint64_t)prevRe) <= N_eight && (fB * (uint64_t)(prevRe + 1)) > N_eight) {
+              rawB = prevRe;
+            } else {
+              rawB = (uint32_t)(N_eight / fB);
+              last_raw_eight[DCO_B] = rawB;
+            }
           } else {
-            clk_div2 = 0;
+            rawB = (uint32_t)(N_eight / (uint64_t)freq_q24_B);
+            last_raw_eight[DCO_B] = rawB;
           }
+          clk_div2 = (rawB > eightPioPulseLength) ? (rawB - eightPioPulseLength) : 0;
         }
       }
-      if (freq2 == 0.0f)
+      if (freq_q24_B <= 0)
         clk_div2 = 0;
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
@@ -392,9 +381,14 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_chan_level = micros();
 #endif
-      // Derive fixed-point Hz (Hz * 2^FREQ_FRAC_BITS) from Q24 frequencies for amp-comp lookup
-      int32_t freqFx_A = (int32_t)((freq_q24_A + (1LL << (24 - FREQ_FRAC_BITS - 1))) >> (24 - FREQ_FRAC_BITS));
-      int32_t freqFx_B = (int32_t)((freq_q24_B + (1LL << (24 - FREQ_FRAC_BITS - 1))) >> (24 - FREQ_FRAC_BITS));
+      // Derive Q16 from Q24 for amp-comp, then to Hz*2^FREQ_FRAC_BITS (get_chan_level does not need higher precision)
+      int32_t freq_q16_A = (int32_t)((freq_q24_A + (1LL << 7)) >> 8);
+      int32_t freq_q16_B = (int32_t)((freq_q24_B + (1LL << 7)) >> 8);
+      const int Q16_TO_FREQ_SHIFT = (16 - FREQ_FRAC_BITS);
+      int32_t freqFx_A = (freq_q16_A >= 0) ? (freq_q16_A >> Q16_TO_FREQ_SHIFT)
+                                           : - ((-freq_q16_A) >> Q16_TO_FREQ_SHIFT);
+      int32_t freqFx_B = (freq_q16_B >= 0) ? (freq_q16_B >> Q16_TO_FREQ_SHIFT)
+                                           : - ((-freq_q16_B) >> Q16_TO_FREQ_SHIFT);
       switch (syncMode) {
         case 0:
           chanLevel = get_chan_level(freqFx_A, DCO_A);
@@ -933,83 +927,6 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
   }
 }
 
-//  uint16_t get_chan_level_lookup(int32_t intFreq, uint8_t voiceN) {
-// #ifndef ENABLE_FS_CALIBRATION
-//   voiceN = 0;
-// #endif
-
-//   uint16_t chanLevel;
-//   uint16_t startArrayPosition = chanLevelVoiceDataSize * voiceN;
-//   uint16_t endArrayPosition = startArrayPosition + chanLevelVoiceDataSize;
-
-//   if (intFreq > 520000) {
-//     return DIV_COUNTER - 1;
-//   }
-
-//   for (uint16_t i = startArrayPosition; i < endArrayPosition; i += 2) {
-//     if (intFreq > freq_to_amp_comp_array[i] && intFreq < freq_to_amp_comp_array[i + 2]) {
-//       int32_t chanLevel32_2 = (freq_to_amp_comp_array[i + 1] - freq_to_amp_comp_array[i + 3]) * (intFreq - freq_to_amp_comp_array[i]);
-//       int32_t chanLevel32_3 = freq_to_amp_comp_array[i + 2] - freq_to_amp_comp_array[i];
-//       return round((float)freq_to_amp_comp_array[i + 1] - ((float)chanLevel32_2 / chanLevel32_3));
-//     } else if (intFreq == freq_to_amp_comp_array[i]) {
-//       return freq_to_amp_comp_array[i + 1];
-//     }
-//   }
-//   return 0;
-// }
-
-// Uses linear interpolation  // separated x and y tables
-// uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
-//   // Check if x is out of bounds
-//   if (x <= ampCompFrequencyArray[voiceN][0]) {
-//     return ampCompArray[voiceN][0];
-//   }
-//   if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) {
-//     return ampCompArray[voiceN][ampCompTableSize - 1];
-//   }
-
-//   // Find the interval x is in
-//   for (int i = 0; i < ampCompTableSize - 1; i++) {
-//     if (ampCompFrequencyArray[voiceN][i] <= x && x < ampCompFrequencyArray[voiceN][i + 1]) {
-//       // Perform linear interpolation using floating-point arithmetic
-//       int32_t x0 = ampCompFrequencyArray[voiceN][i];
-//       int32_t x1 = ampCompFrequencyArray[voiceN][i + 1];
-//       int32_t y0 = ampCompArray[voiceN][i];
-//       int32_t y1 = ampCompArray[voiceN][i + 1];
-
-//       // Calculate the interpolated value and round it to the nearest integer
-//       return round(y0 + (float)(y1 - y0) * (x - x0) / (x1 - x0));
-
-//     }
-//   }
-
-//   // If no interval is found (should not happen), return 0
-//   return 0;
-// }
-
-// uint16_t get_vco_level(float freq) {
-
-//   float vcoLevel;
-//   if (freq > 8500.00) {
-//     vcoLevel = 9999;
-//   } else {
-//     // for (int i = 0; i < 75; i = i + 2)
-//     for (int i = 0; i < sizeof(freq_to_vco_array); i++) {
-//       if (freq == freq_to_vco_array[i]) {
-//         vcoLevel = pwm_to_vco_euler_array[i];
-//         return vcoLevel;
-//         break;
-//       } else if ((freq >= freq_to_vco_array[i]) && (freq <= freq_to_vco_array[i + 1])) {
-//         vcoLevel = pwm_to_vco_euler_array[i] - ((pwm_to_vco_euler_array[i] - pwm_to_vco_euler_array[i + 1]) * (freq - freq_to_vco_array[i])) / (freq_to_vco_array[i + 1] - freq_to_vco_array[i]);
-//         vcoLevel = pow(vcoLevel, 0.36788);
-//         return (uint16_t)vcoLevel;
-//         break;
-//       }
-//     }
-//   }
-//   return (uint16_t)vcoLevel;
-// }
-
 void voice_task_debug() {
 
   for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
@@ -1103,52 +1020,137 @@ void voice_task_debug() {
   }
 }
 
-inline int32_t interpolatePitchMultiplier(int32_t x) {
+// Cached variant: pass DCO index to reuse last segment and avoid binary search
+inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoIndex) {
+// #ifdef RUNNING_AVERAGE
+//   unsigned long t_interp = micros();
+// #endif
+  int32_t xInt = xQ16 >> 16;
+  // Clamp to bounds using integer part
+  if (xInt <= xMultiplierTable[0]) {
+    return yMultiplierTable[0];
+  }
+  if (xInt >= xMultiplierTable[multiplierTableSize - 1]) {
+    return yMultiplierTable[multiplierTableSize - 1];
+  }
+  int low = interpSegCache[dcoIndex];
+  // Validate cache; adjust locally if possible
+  if (low < 0 || low > multiplierTableSize - 2 ||
+      !(xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+    // Try step toward correct segment
+    if (low >= 0 && low < multiplierTableSize - 1) {
+      if (xInt >= xMultiplierTable[low + 1]) {
+        while (low < multiplierTableSize - 2 && xInt >= xMultiplierTable[low + 1]) low++;
+      } else if (xInt < xMultiplierTable[low]) {
+        while (low > 0 && xInt < xMultiplierTable[low]) low--;
+      }
+    }
+    // If still wrong, do binary search
+    if (!(low >= 0 && low < multiplierTableSize - 1 &&
+          xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+      int l = 0, h = multiplierTableSize - 1;
+      while (l <= h) {
+        int m = (l + h) >> 1;
+        if (xMultiplierTable[m] <= xInt && xInt < xMultiplierTable[m + 1]) {
+          low = m;
+          break;
+        } else if (xInt < xMultiplierTable[m]) {
+          h = m - 1;
+        } else {
+          l = m + 1;
+        }
+      }
+      if (low < 0) low = 0;
+      if (low > multiplierTableSize - 2) low = multiplierTableSize - 2;
+    }
+    interpSegCache[dcoIndex] = (int16_t)low;
+  }
+  int32_t x0 = xMultiplierTable[low];
+  int32_t y0 = yMultiplierTable[low];
+  int32_t slope = slopeQ20[low];
+#ifdef PITCH_INTERP_USE_Q8
+  // 32-bit friendly path: slope in Q8, delta in Q8; total 16 frac bits
+  int32_t deltaQ8 = (xQ16 - (x0 << 16)) >> 8;
+  int32_t slope8 = slopeQ8[low];
+  // Product is Q16; shift by 16 to return table units (with rounding)
+  int32_t y = y0 + (int32_t)((((int64_t)deltaQ8 * (int64_t)slope8) + (1LL << 15)) >> 16);
+#elif defined(PITCH_INTERP_USE_Q12)
+  // Medium-precision path: slope in Q12, delta in Q12; total 24 frac bits
+  int32_t deltaQ12 = (xQ16 - (x0 << 16)) >> 4;
+  int32_t slope12 = slopeQ12[low];
+  int32_t y = y0 + (int32_t)((((int64_t)deltaQ12 * (int64_t)slope12) + (1LL << 23)) >> 24);
+#else
+  // High-precision path: slope in Q20, delta in Q16
+  int32_t deltaQ16 = xQ16 - (x0 << 16);
+  int32_t y = y0 + (int32_t)((((int64_t)deltaQ16 * (int64_t)slope) + (1LL << 35)) >> 36);
+#endif
+// #ifdef RUNNING_AVERAGE
+//   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+// #endif
+  return y;
+}
+// Cached Q16 ratio interpolator: returns multiplier ratio in Q16 without divide
+inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
 #ifdef RUNNING_AVERAGE
   unsigned long t_interp = micros();
 #endif
-  // Check if x is out of bounds
-  if (x <= xMultiplierTable[0]) {
-#ifdef RUNNING_AVERAGE
-    ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-#endif
-    return yMultiplierTable[0];
+  int32_t xInt = xQ16 >> 16;
+  // Clamp to bounds using integer part
+  if (xInt <= xMultiplierTable[0]) {
+    // Convert table y->Q16 ratio with rounding using reciprocal-multiply (n/10000 ≈ (n * M) >> 45)
+    uint64_t num0 = ((uint64_t)(uint32_t)yMultiplierTable[0] << 16) + 5000u;
+    return (int32_t)((num0 * 0xD1B71759ULL) >> 45);
   }
-  if (x >= xMultiplierTable[multiplierTableSize - 1]) {
-#ifdef RUNNING_AVERAGE
-    ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-#endif
-    return yMultiplierTable[multiplierTableSize - 1];
+  if (xInt >= xMultiplierTable[multiplierTableSize - 1]) {
+    uint64_t numN = ((uint64_t)(uint32_t)yMultiplierTable[multiplierTableSize - 1] << 16) + 5000u;
+    return (int32_t)((numN * 0xD1B71759ULL) >> 45);
   }
-
-  // Binary search to find the interval
-  int low = 0;
-  int high = multiplierTableSize - 1;
-  while (low <= high) {
-    int mid = (low + high) / 2;
-    if (xMultiplierTable[mid] <= x && x < xMultiplierTable[mid + 1]) {
-      low = mid;
-      break;
-    } else if (x < xMultiplierTable[mid]) {
-      high = mid - 1;
-    } else {
-      low = mid + 1;
+  int low = interpSegCache[dcoIndex];
+  // Validate cache; adjust locally if possible
+  if (low < 0 || low > multiplierTableSize - 2 ||
+      !(xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+    // Try step toward correct segment
+    if (low >= 0 && low < multiplierTableSize - 1) {
+      if (xInt >= xMultiplierTable[low + 1]) {
+        while (low < multiplierTableSize - 2 && xInt >= xMultiplierTable[low + 1]) low++;
+      } else if (xInt < xMultiplierTable[low]) {
+        while (low > 0 && xInt < xMultiplierTable[low]) low--;
+      }
     }
+    // If still wrong, do binary search
+    if (!(low >= 0 && low < multiplierTableSize - 1 &&
+          xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+      int l = 0, h = multiplierTableSize - 1;
+      while (l <= h) {
+        int m = (l + h) >> 1;
+        if (xMultiplierTable[m] <= xInt && xInt < xMultiplierTable[m + 1]) {
+          low = m;
+          break;
+        } else if (xInt < xMultiplierTable[m]) {
+          h = m - 1;
+        } else {
+          l = m + 1;
+        }
+      }
+      if (low < 0) low = 0;
+      if (low > multiplierTableSize - 2) low = multiplierTableSize - 2;
+    }
+    interpSegCache[dcoIndex] = (int16_t)low;
   }
-
-  // Perform linear interpolation using fixed-point arithmetic
+  // Interpolate y in table units using high-precision slope (same as IntQ16 path)
   int32_t x0 = xMultiplierTable[low];
-  int32_t x1 = xMultiplierTable[low + 1];
   int32_t y0 = yMultiplierTable[low];
-  int32_t y1 = yMultiplierTable[low + 1];
-
-  int32_t y = y0 + ((y1 - y0) * (x - x0) / (x1 - x0));
+  int32_t slope = slopeQ20[low];
+  int32_t deltaQ16 = xQ16 - (x0 << 16);
+  int32_t yTab = y0 + (int32_t)((((int64_t)deltaQ16 * (int64_t)slope) + (1LL << 35)) >> 36);
+  // Convert y (table units) to ratio Q16 with rounding using reciprocal-multiply
+  uint64_t num = ((uint64_t)(uint32_t)yTab << 16) + 5000u; // scale/2
+  int32_t ratioQ16 = (int32_t)((num * 0xD1B71759ULL) >> 45);
 #ifdef RUNNING_AVERAGE
   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
 #endif
-  return y;
+  return ratioQ16;
 }
-
 void initMultiplierTables() {
 
   float y_value;
@@ -1172,7 +1174,29 @@ void initMultiplierTables() {
 
     xMultiplierTable[i] = (int32_t)(x * (double)multiplierTableScale);
     yMultiplierTable[i] = (int32_t)(y_value * (double)multiplierTableScale);
+  x0Q16_tbl[i] = xMultiplierTable[i] << 16;
   }
+  // Precompute slopes for fast integer interpolation
+  for (int i = 0; i < (multiplierTableSize - 1); ++i) {
+    int32_t dx = xMultiplierTable[i + 1] - xMultiplierTable[i];
+    if (dx == 0) dx = 1;
+    // Precompute slope in Q20 for fast multiply-only interpolation
+    int32_t dy = yMultiplierTable[i + 1] - yMultiplierTable[i];
+    int64_t numSlope = ((int64_t)dy << 20) + (dx > 0 ? dx/2 : -dx/2);
+    slopeQ20[i] = (int32_t)(numSlope / (int64_t)dx);
+#ifdef PITCH_INTERP_USE_Q8
+    // Optional lower-precision slope for 32-bit fast path
+    int64_t numSlope8 = ((int64_t)dy << 8) + (dx > 0 ? dx/2 : -dx/2);
+    slopeQ8[i] = (int32_t)(numSlope8 / (int64_t)dx);
+#endif
+#ifdef PITCH_INTERP_USE_Q12
+    // Medium-precision slope for balanced speed/accuracy
+    int64_t numSlope12 = ((int64_t)dy << 12) + (dx > 0 ? dx/2 : -dx/2);
+    slopeQ12[i] = (int32_t)(numSlope12 / (int64_t)dx);
+#endif
+  }
+  // Initialize per-DCO cache to invalid
+  for (int d = 0; d < NUM_VOICES_TOTAL * 2; ++d) interpSegCache[d] = -1;
 }
 
 #ifdef RUNNING_AVERAGE
@@ -1194,7 +1218,7 @@ void print_voice_task_timings() {
   if (ra_unison_modifier.getCount() > 0) Serial.println(ra_unison_modifier.getFastAverage(), 2); else Serial.println("N/A");
   
   Serial.print("Drift Modifier:       "); 
-  if (ra_drift_modifier.getCount() > 0) Serial.println(ra_drift_modifier.getFastAverage(), 2); else Serial.println("N/A");
+  if (ra_drift_multiplier.getCount() > 0) Serial.println(ra_drift_multiplier.getFastAverage(), 2); else Serial.println("N/A");
   
   Serial.print("Modifiers Combination:"); 
   if (ra_modifiers_combination.getCount() > 0) Serial.println(ra_modifiers_combination.getFastAverage(), 2); else Serial.println("N/A");
@@ -1220,3 +1244,58 @@ void print_voice_task_timings() {
   Serial.println("===================================================\n");
 }
 #endif
+
+
+// inline int32_t interpolatePitchMultiplier(int32_t x) {
+// #ifdef RUNNING_AVERAGE
+//   unsigned long t_interp = micros();
+// #endif
+//   // Check if x is out of bounds
+//   if (x <= xMultiplierTable[0]) {
+// #ifdef RUNNING_AVERAGE
+//     ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+// #endif
+//     return yMultiplierTable[0];
+//   }
+//   if (x >= xMultiplierTable[multiplierTableSize - 1]) {
+// #ifdef RUNNING_AVERAGE
+//     ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+// #endif
+//     return yMultiplierTable[multiplierTableSize - 1];
+//   }
+
+//   // Binary search to find the interval
+//   int low = 0;
+//   int high = multiplierTableSize - 1;
+//   while (low <= high) {
+//     int mid = (low + high) / 2;
+//     if (xMultiplierTable[mid] <= x && x < xMultiplierTable[mid + 1]) {
+//       low = mid;
+//       break;
+//     } else if (x < xMultiplierTable[mid]) {
+//       high = mid - 1;
+//     } else {
+//       low = mid + 1;
+//     }
+//   }
+
+//   // Perform linear interpolation using fixed-point arithmetic
+//   int32_t x0 = xMultiplierTable[low];
+//   int32_t x1 = xMultiplierTable[low + 1];
+//   int32_t y0 = yMultiplierTable[low];
+//   int32_t y1 = yMultiplierTable[low + 1];
+
+//   int32_t dx = x1 - x0;
+//   if (dx == 0) return y0;
+//   int32_t dy = y1 - y0;
+//   int32_t num = x - x0;
+//   // Use Q15 reciprocal to avoid division in hot path
+//   int32_t invQ15 = invDxQ15[low];
+//   int32_t frac_q15 = (int32_t)(((int64_t)num * (int64_t)invQ15) >> 15); // ~Q0 with fraction in Q15
+//   int32_t interp = (int32_t)(((int64_t)dy * (int64_t)frac_q15) >> 15);
+//   int32_t y = y0 + interp;
+// #ifdef RUNNING_AVERAGE
+//   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+// #endif
+//   return y;
+// }

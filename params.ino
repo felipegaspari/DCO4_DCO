@@ -145,6 +145,11 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
     case 47:
       ADSR1toDETUNE1 = paramValue;
       ADSR1toDETUNE1_formula = (float)1 / 1080000 * (int16_t)ADSR1toDETUNE1;
+      // Precompute fixed-point scale to avoid divide in hot path: (ADSR1toDETUNE1 * 2^24) / 1080000
+      {
+        int64_t num = ((int64_t)(int16_t)ADSR1toDETUNE1 << 24) + (1080000 / 2);
+        ADSR1toDETUNE1_scale_q24 = (int32_t)(num / 1080000);
+      }
       break;
 
     case 48:
