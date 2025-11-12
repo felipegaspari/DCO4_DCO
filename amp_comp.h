@@ -13,7 +13,7 @@ static constexpr int ampCompTableSize = 22;
 static constexpr int FREQ_FRAC_BITS = 8;
 // Maximum frequency (Hz) for which we apply amplitude compensation.
 // At or above this frequency, get_chan_level() returns full scale (DIV_COUNTER).
-static constexpr int32_t AMP_COMP_MAX_HZ = 6000;
+static constexpr int32_t AMP_COMP_MAX_HZ = 7000;
 static constexpr int32_t AMP_COMP_MAX_HZ_Q = (int32_t)(AMP_COMP_MAX_HZ << FREQ_FRAC_BITS);
 
 int32_t freq_to_amp_comp_array[352];
@@ -29,22 +29,15 @@ float cCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
 
 // Per-window normalized quadratic in t = (x - x0) / (x2 - x0), where x,x0,x2 are integer Hz.
 // Runtime uses 32-bit fixed-point t (Q(T_FRAC)) and precomputed integer coefficients.
-static constexpr int T_FRAC = 14;
+static constexpr int T_FRAC = 12;
 int32_t xBaseWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
 int32_t dxWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
 // Use Q28 reciprocal to avoid underflow on very large dx while keeping shifts small
 uint32_t invDxWIN_q28[NUM_OSCILLATORS][ampCompTableSize - 2];
-int16_t aQWIN[NUM_OSCILLATORS][ampCompTableSize - 2]; // Q(T_FRAC), fits in int16_t at ≤6 kHz
-int16_t bQWIN[NUM_OSCILLATORS][ampCompTableSize - 2]; // Q(T_FRAC), fits in int16_t
+int64_t aQWIN[NUM_OSCILLATORS][ampCompTableSize - 2]; // Q(T_FRAC) wide
+int64_t bQWIN[NUM_OSCILLATORS][ampCompTableSize - 2]; // Q(T_FRAC) wide
 uint16_t cQWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
-// 32-bit-only fast-path parameters:
-// t_q = ((x - x0) >> tShift) * tScale_qT   // produces Q(T_FRAC) without 64-bit
-uint8_t  tShiftWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
-uint32_t tScaleWIN_qT[NUM_OSCILLATORS][ampCompTableSize - 2];
-// Integer (Q0) normalized quadratic coefficients for 32-bit evaluation:
-// y = ((aInt * (t_q*t_q >> T_FRAC)) >> T_FRAC) + ((bInt * t_q) >> (T_FRAC)) + cQ
-int32_t aIntWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
-int32_t bIntWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
+// (removed legacy 32-bit-only fast-path parameters and integer coeffs)
 
 // Function to precompute the coefficients
 void precomputeCoefficients() {
@@ -87,34 +80,10 @@ void precomputeCoefficients() {
       if (dxWIN[j][i] == 0) dxWIN[j][i] = 1;
       // Reciprocal of dx in Q28 for fast t computation without underflow
       invDxWIN_q28[j][i] = (uint32_t)llround((double)268435456.0 / (double)dxWIN[j][i]); // 2^28 / dx
-      // Coefficients in Q(T_FRAC) for 32-bit eval (stored as int16_t)
-      {
-        int32_t aTmp = (int32_t)lrintf(aN * (float)(1 << T_FRAC));
-        if (aTmp >  32767) aTmp =  32767;
-        if (aTmp < -32768) aTmp = -32768;
-        aQWIN[j][i] = (int16_t)aTmp;
-        int32_t bTmp = (int32_t)lrintf(bN * (float)(1 << T_FRAC));
-        if (bTmp >  32767) bTmp =  32767;
-        if (bTmp < -32768) bTmp = -32768;
-        bQWIN[j][i] = (int16_t)bTmp;
-      }
-      // 32-bit only fast-path precompute:
-      // Choose shift so that (dx >> tShift) <= 2^T_FRAC, and precompute scale = round(2^(T_FRAC + tShift)/dx)
-      {
-        uint32_t dxu = (uint32_t)dxWIN[j][i];
-        uint32_t limit = (1u << T_FRAC);
-        uint8_t tsh = 0;
-        while ((dxu >> tsh) > limit) { ++tsh; }
-        tShiftWIN[j][i] = tsh;
-        uint32_t sh = (uint32_t)T_FRAC + (uint32_t)tsh;
-        uint32_t num = (sh >= 31u) ? 0u : (1u << sh);
-        uint32_t denom = dxu == 0u ? 1u : dxu;
-        uint32_t scaled = (uint32_t)(((uint64_t)num + (denom >> 1)) / (uint64_t)denom);
-        if (scaled == 0u) scaled = 1u;
-        tScaleWIN_qT[j][i] = scaled;
-        aIntWIN[j][i] = (int32_t)lrintf(aN);
-        bIntWIN[j][i] = (int32_t)lrintf(bN);
-      }
+      // Coefficients in Q(T_FRAC) for 32-bit eval (stored as int32_t, no saturation)
+      aQWIN[j][i] = (int64_t)llround((double)aN * (double)(1LL << T_FRAC));
+      bQWIN[j][i] = (int64_t)llround((double)bN * (double)(1LL << T_FRAC));
+      // (removed legacy shift/scale and integer coeff precompute)
       // c in y units, clamp to valid range
       int32_t ctmp = (int32_t)lrintf(y0f);
       if (ctmp < 0) ctmp = 0;

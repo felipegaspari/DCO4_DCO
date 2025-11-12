@@ -1,5 +1,7 @@
 #include "include_all.h"
 
+// (amp-comp debug removed after validation)
+
 // Simple optimization: cache last raw divider and reuse while it remains valid.
 // Validity check uses multiplication inequalities; no divides in steady state.
 static uint32_t last_raw_eight[NUM_OSCILLATORS] = {0xFFFFFFFF};
@@ -254,22 +256,26 @@ inline void voice_task() {
       int32_t ratio1_Q16 = interpolateRatioQ16_cached(xScaled1_Q16, DCO_A);
       int32_t ratio2_Q16 = interpolateRatioQ16_cached(xScaled2_Q16, DCO_B);
       freq_q24_A = (portamento_cur_freq_q24[DCO_A] * (int64_t)ratio1_Q16) >> 16;
-      // Combine OSC2 detune into the ratio to save a multiply:
+      // Combine OSC2 ratio with detune into one Q16 factor
       // detune_Q16 = round(detune_q24 / 2^8)
-      int32_t detune_Q16 = (int32_t)((detune_q24 + (1 << 7)) >> 8);
+      int32_t detune_Q16 = (int32_t)((((int64_t)detune_q24) + 128) >> 8);
       // combined_Q16 = round((ratio2_Q16 * detune_Q16) / 2^16)
-      uint64_t prod_r = (uint64_t)(uint32_t)ratio2_Q16 * (uint32_t)detune_Q16;
-      int32_t combined_Q16 = (int32_t)((prod_r + (1ULL << 15)) >> 16);
-      // Single multiply to scale base frequency
+      int32_t combined_Q16 = (int32_t)((((int64_t)ratio2_Q16 * (int64_t)detune_Q16) + (1LL << 15)) >> 16);
       freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16) >> 16;
       #else
       int32_t yTab1 = interpolatePitchMultiplierIntQ16_cached(xScaled1_Q16, DCO_A);
       int32_t yTab2 = interpolatePitchMultiplierIntQ16_cached(xScaled2_Q16, DCO_B);
-      // Convert multiplier back to Q24 by dividing by multiplierTableScale (integer divide, like original)
-      freq_q24_A = ( (portamento_cur_freq_q24[DCO_A] * (int64_t)yTab1) / (int64_t)multiplierTableScale );
-      int64_t tmpB_q24 = ( (portamento_cur_freq_q24[DCO_B] * (int64_t)yTab2) / (int64_t)multiplierTableScale );
-      // Apply detune in Q24 for maximum precision
-      freq_q24_B = (tmpB_q24 * (int64_t)detune_q24) >> 24;
+      // Convert yTab -> ratioQ16 using reciprocal-multiply (round((yTab<<16)/10000))
+      uint64_t numA = ((uint64_t)(uint32_t)yTab1 << 16) + 5000u;
+      int32_t ratio1_Q16_fallback = (int32_t)((numA * 0xD1B71759ULL) >> 45);
+      uint64_t numB = ((uint64_t)(uint32_t)yTab2 << 16) + 5000u;
+      int32_t ratio2_Q16_fallback = (int32_t)((numB * 0xD1B71759ULL) >> 45);
+      // Scale A with ratioQ16
+      freq_q24_A = (portamento_cur_freq_q24[DCO_A] * (int64_t)ratio1_Q16_fallback) >> 16;
+      // Combine OSC2 ratio with detune into one Q16 factor
+      int32_t detune_Q16_fb = (int32_t)((((int64_t)detune_q24) + 128) >> 8);
+      int32_t combined_Q16_fb = (int32_t)((((int64_t)ratio2_Q16_fallback * (int64_t)detune_Q16_fb) + (1LL << 15)) >> 16);
+      freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16_fb) >> 16;
       #endif
 
       // Per-cycle: no caching; compute dividers directly from current Q18 frequency
@@ -392,7 +398,7 @@ inline void voice_task() {
       switch (syncMode) {
         case 0:
           chanLevel = get_chan_level(freqFx_A, DCO_A);
-          chanLevel2 = get_chan_level(freqFx_B, DCO_B);
+          chanLevel2 = get_chan_level(freqFx_B, DCO_B);         
           break;
         case 1:
           chanLevel = get_chan_level((freqFx_A > freqFx_B ? freqFx_A : freqFx_B), DCO_A);
@@ -406,6 +412,26 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       ra_get_chan_level.addValue((float)(micros() - t_chan_level));
 #endif
+
+          // Periodic accuracy check against float reference (every ~100 ms)
+          {
+            // Only print for voice 0 (DCO_A belongs to voice i)
+            if (i == 0) {
+              static unsigned long lastAmpDiffPrint = 0;
+              unsigned long now = micros();
+              if ((now - lastAmpDiffPrint) >= 100000) {
+                uint16_t y_fl_A = get_chan_level_lookup_float(freqFx_A, DCO_A);
+                // Convert Q(FREQ_FRAC_BITS) to Hz for readability
+                float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
+                Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
+                Serial.print(" fHz="); Serial.print(fHzA, 3);
+                Serial.print(" fl="); Serial.print((int32_t)y_fl_A);
+                Serial.print(" fx="); Serial.print((int32_t)chanLevel);
+                Serial.print(" diff="); Serial.println((int32_t)y_fl_A - (int32_t)chanLevel);
+                lastAmpDiffPrint = now;
+              }
+            }
+          }
 
       // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
@@ -737,29 +763,47 @@ inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
 
   // Fixed-point eval in window i..i+2
   int32_t x0 = xBaseWIN[voiceN][i];
+  // If we're in the top-most window AND both right endpoints are already at max,
+  // then once we pass the mid point, clamp to DIV_COUNTER.
+  if (i >= (ampCompTableSize - 3) &&
+      ampCompArray[voiceN][i + 1] >= (int32_t)DIV_COUNTER &&
+      ampCompArray[voiceN][i + 2] >= (int32_t)DIV_COUNTER &&
+      x >= ampCompFrequencyArray[voiceN][i + 1]) {
+    return (uint16_t)DIV_COUNTER;
+  }
+  // Symmetric case: if top-most window endpoints are at/below 0, clamp to 0 beyond midpoint
+  if (i >= (ampCompTableSize - 3) &&
+      ampCompArray[voiceN][i + 1] <= 0 &&
+      ampCompArray[voiceN][i + 2] <= 0 &&
+      x >= ampCompFrequencyArray[voiceN][i + 1]) {
+    return (uint16_t)0;
+  }
   int32_t dx02 = dxWIN[voiceN][i];
   int32_t dx = x - x0;
   if (dx < 0) dx = 0;
   if (dx > dx02) dx = dx02;
-  // 32-bit fast path: t_q(T_FRAC) = ((dx >> tShift) * tScale_qT)
-  uint32_t dx_s = ((uint32_t)dx) >> tShiftWIN[voiceN][i];
-  uint32_t t_q = (uint32_t)(dx_s * tScaleWIN_qT[voiceN][i]); // Q(T_FRAC)
+  // Q28 reciprocal path: t_q = round((dx / dx02) * 2^T_FRAC)
+  // invDxWIN_q28 = round(2^28 / dx02) precomputed per window
+  const uint32_t invDx_q28 = invDxWIN_q28[voiceN][i];
+  uint32_t t_q = (uint32_t)(((uint64_t)(uint32_t)dx * (uint64_t)invDx_q28) >> (28 - T_FRAC));
   if (t_q > (uint32_t)(1u << T_FRAC)) t_q = (1u << T_FRAC);
 
   // 32-bit polynomial using aQ/bQ (Q(T_FRAC)) and t in Q(T_FRAC):
-  int32_t aQ = (int32_t)aQWIN[voiceN][i];
-  int32_t bQ = (int32_t)bQWIN[voiceN][i];
+  int64_t aQ = (int64_t)aQWIN[voiceN][i];
+  int64_t bQ = (int64_t)bQWIN[voiceN][i];
   int32_t cQ = (int32_t)cQWIN[voiceN][i];
-  // quad = ((aQ * t_q) >> T_FRAC) * t_q >> T_FRAC ; lin = (bQ * t_q) >> T_FRAC
-  int32_t tmp = (int32_t)((aQ * (int32_t)t_q) >> T_FRAC);
-  int32_t quad = (int32_t)((tmp * (int32_t)t_q) >> T_FRAC);
-  int32_t lin  = (int32_t)((bQ * (int32_t)t_q) >> T_FRAC);
-  int32_t y = quad + lin + cQ;
+  // Fast Q(T_FRAC) polynomial: compute t2 once, do one rounding at the end
+  uint32_t t2   = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);              // Q(T_FRAC)
+  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                           // Q(T_FRAC)
+  int32_t linQ  = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                           // Q(T_FRAC)
+  int32_t yQ    = quadQ + linQ + (cQ << T_FRAC);                                       // Q(T_FRAC)
+  int32_t y     = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);        // Q0
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
   return (uint16_t)y;
 }
 
+ 
 // Float reference version (kept for fallback/testing)
 inline uint16_t get_chan_level_lookup_float(int32_t x, uint8_t voiceN) {
   if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
