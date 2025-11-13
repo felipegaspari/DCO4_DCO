@@ -16,45 +16,40 @@ static constexpr int32_t AMP_COMP_SENTINEL_FREQ_Q = 50000000; // sentinel marker
 static constexpr int32_t AMP_COMP_MAX_HZ = 7000;
 static constexpr int32_t AMP_COMP_MAX_HZ_Q = (int32_t)(AMP_COMP_MAX_HZ << FREQ_FRAC_BITS);
 
-static constexpr int AMP_COMP_FAST_T_FRAC = 12;
+static constexpr int AMP_COMP_FAST_T_FRAC = 13;
 static constexpr int AMP_COMP_FAST_RECIP_EXTRA = 12;
-static constexpr int AMP_COMP_FAST_COEFF_FRAC = 6;
+static constexpr int AMP_COMP_FAST_COEFF_FRAC = 5;
 static constexpr int AMP_COMP_FAST_SHIFT = AMP_COMP_FAST_COEFF_FRAC + AMP_COMP_FAST_T_FRAC;
 static constexpr int AMP_COMP_FAST_SLOPE_FRAC = 12;
-
-uint8_t tMulShiftFast[NUM_OSCILLATORS][ampCompTableSize - 2];
-bool useQuadWindow[NUM_OSCILLATORS][ampCompTableSize - 2];
-int32_t slopeDx_fast[NUM_OSCILLATORS][ampCompTableSize - 2];
 
 int32_t freq_to_amp_comp_array[352];
 uint8_t ampCompArraySize = FSVoiceDataSize / 4;
 
-int32_t ampCompFrequencyArray[NUM_OSCILLATORS][ampCompTableSize];
-int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize];
+int32_t ampCompFrequencyArray[NUM_OSCILLATORS][ampCompTableSize + 1];
+int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize + 1];
 
 // High-precision float coefficients (original model): y = a*x^2 + b*x + c
-float aCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
-float bCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
-float cCoeff[NUM_OSCILLATORS][ampCompTableSize - 2];
-double aCoeffD[NUM_OSCILLATORS][ampCompTableSize - 2];
-double bCoeffD[NUM_OSCILLATORS][ampCompTableSize - 2];
-double cCoeffD[NUM_OSCILLATORS][ampCompTableSize - 2];
-bool useDoubleWindow[NUM_OSCILLATORS][ampCompTableSize - 2];
-bool plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 2];
+float aCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
+float bCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
+float cCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
+double aCoeffD[NUM_OSCILLATORS][ampCompTableSize - 1];
+double bCoeffD[NUM_OSCILLATORS][ampCompTableSize - 1];
+double cCoeffD[NUM_OSCILLATORS][ampCompTableSize - 1];
+bool useDoubleWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
+bool plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
 
 // Per-window normalized quadratic in t = (x - x0) / (x2 - x0), where x,x0,x2 are integer Hz.
 // Runtime uses 32-bit fixed-point t (Q(T_FRAC)) and precomputed integer coefficients.
 static constexpr int T_FRAC = 14;
-int32_t xBaseWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
-int32_t dxWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
+int32_t xBaseWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
+int32_t dxWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
 // Use Q28 reciprocal to avoid underflow on very large dx while keeping shifts small
-uint32_t invDxWIN_q28[NUM_OSCILLATORS][ampCompTableSize - 2];
-int64_t aQWIN[NUM_OSCILLATORS][ampCompTableSize - 2]; // Q(T_FRAC) wide
-int64_t bQWIN[NUM_OSCILLATORS][ampCompTableSize - 2]; // Q(T_FRAC) wide
-uint16_t cQWIN[NUM_OSCILLATORS][ampCompTableSize - 2];
-uint16_t invDxWIN_qFast[NUM_OSCILLATORS][ampCompTableSize - 2];
-int32_t aQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 2];
-int32_t bQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 2];
+uint32_t invDxWIN_q28[NUM_OSCILLATORS][ampCompTableSize - 1];
+int64_t aQWIN[NUM_OSCILLATORS][ampCompTableSize - 1]; // Q(T_FRAC) wide
+int64_t bQWIN[NUM_OSCILLATORS][ampCompTableSize - 1]; // Q(T_FRAC) wide
+uint16_t cQWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
+int32_t aQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 1];
+int32_t bQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 1];
 // (removed legacy 32-bit-only fast-path parameters and integer coeffs)
 
 
@@ -72,6 +67,14 @@ int32_t bQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 2];
 static void precomputeCoefficients() {
   static_assert(T_FRAC > 0 && T_FRAC < 28, "T_FRAC must be in a valid range for the math to work.");
 
+  // --- Data Sanitization ---
+  // Append a final point to each table to guarantee it reaches the defined maximum.
+  // This makes the system robust to incomplete calibration data from the filesystem.
+  for (int j = 0; j < NUM_OSCILLATORS; ++j) {
+      ampCompFrequencyArray[j][ampCompTableSize] = AMP_COMP_MAX_HZ_Q;
+      ampCompArray[j][ampCompTableSize] = DIV_COUNTER;
+  }
+
   const double freqScale    = (double)(1u << FREQ_FRAC_BITS);
   const double invFreqScale = 1.0 / freqScale;
   const double maxFreqHz    = (double)AMP_COMP_MAX_HZ;
@@ -80,7 +83,7 @@ static void precomputeCoefficients() {
   const int fastCoeffShift = AMP_COMP_FAST_COEFF_FRAC + AMP_COMP_FAST_T_FRAC;
 
   for (int j = 0; j < NUM_OSCILLATORS; j++) {
-    for (int i = 0; i < ampCompTableSize - 2; ++i) {
+    for (int i = 0; i < ampCompTableSize - 1; ++i) {
       double x0_f = (double)ampCompFrequencyArray[j][i]     * invFreqScale;
       double x1_f = (double)ampCompFrequencyArray[j][i + 1] * invFreqScale;
       double x2_f = (double)ampCompFrequencyArray[j][i + 2] * invFreqScale;
@@ -110,16 +113,17 @@ static void precomputeCoefficients() {
       // --- 2. Calculate Float Coefficients (for the fallback) ---
       long double denom_ld = (long double)(x0_f - x1_f) * (long double)(x0_f - x2_f) * (long double)(x1_f - x2_f);
       if (denom_ld == 0.0L) denom_ld = 1.0L;
+      long double inv_denom_ld = 1.0L / denom_ld;
 
       long double aVal_ld = ((long double)x2_f * (long double)(y1_f - y0_f) +
                              (long double)x1_f * (long double)(y0_f - y2_f) +
-                             (long double)x0_f * (long double)(y2_f - y1_f)) / denom_ld;
+                             (long double)x0_f * (long double)(y2_f - y1_f)) * inv_denom_ld;
       long double bVal_ld = ((long double)x2_f * (long double)x2_f * (long double)(y0_f - y1_f) +
                              (long double)x1_f * (long double)x1_f * (long double)(y2_f - y0_f) +
-                             (long double)x0_f * (long double)x0_f * (long double)(y1_f - y2_f)) / denom_ld;
+                             (long double)x0_f * (long double)x0_f * (long double)(y1_f - y2_f)) * inv_denom_ld;
       long double cVal_ld = ((long double)x1_f * (long double)x2_f * (long double)(x1_f - x2_f) * (long double)y0_f +
                              (long double)x2_f * (long double)x0_f * (long double)(x2_f - x0_f) * (long double)y1_f +
-                             (long double)x0_f * (long double)x1_f * (long double)(x0_f - x1_f) * (long double)y2_f) / denom_ld;
+                             (long double)x0_f * (long double)x1_f * (long double)(x0_f - x1_f) * (long double)y2_f) * inv_denom_ld;
 
       aCoeff[j][i] = (float)aVal_ld;
       bCoeff[j][i] = (float)bVal_ld;
@@ -130,21 +134,17 @@ static void precomputeCoefficients() {
 
       long double dx02_ld = (long double)x2_f - (long double)x0_f;
       if (dx02_ld <= 0.0L) dx02_ld = 1.0L;
-      long double t1_ld = ((long double)x1_f - (long double)x0_f) / dx02_ld;
+      long double inv_dx02_ld = 1.0L / dx02_ld;
+      long double t1_ld = ((long double)x1_f - (long double)x0_f) * inv_dx02_ld;
       long double d20_ld = (long double)y2_f - (long double)y0_f;
       long double d10_ld = (long double)y1_f - (long double)y0_f;
 
       long double denom_norm_ld = (t1_ld * t1_ld - t1_ld);
       if (denom_norm_ld == 0.0L) denom_norm_ld = 1.0L;
+      long double inv_denom_norm_ld = 1.0L / denom_norm_ld;
 
-      long double aN_ld = (d10_ld - d20_ld * t1_ld) / denom_norm_ld;
+      long double aN_ld = (d10_ld - d20_ld * t1_ld) * inv_denom_norm_ld;
       long double bN_ld = d20_ld - aN_ld;
-
-      // Heuristic: quadratic only if mid deviation from linear > 0.75 units
-      double y_mid_lin = y0_f + (double)(0.5L * d20_ld);
-      double y_mid_quad = (double)(aN_ld * 0.25L + bN_ld * 0.5L) + y0_f;
-      double dev_mid = fabs(y_mid_quad - y_mid_lin);
-      useQuadWindow[j][i] = (dev_mid > 0.75);
 
       xBaseWIN[j][i] = ampCompFrequencyArray[j][i];
       dxWIN[j][i]    = ampCompFrequencyArray[j][i + 2] - ampCompFrequencyArray[j][i];
@@ -165,30 +165,13 @@ static void precomputeCoefficients() {
       if (c_temp > (int32_t)DIV_COUNTER) c_temp = (int32_t)DIV_COUNTER;
       cQWIN[j][i] = (uint16_t)c_temp;
 
-      // Fast reciprocal and per-window t scaling to keep 32-bit safe
-      uint32_t invFast = (uint32_t)((fastRecipNumerator + (uint32_t)(dxWIN[j][i] >> 1)) / (uint32_t)dxWIN[j][i]);
-      if (invFast == 0) invFast = 1;
-      if (invFast > 0xFFFFu) invFast = 0xFFFFu;
-      invDxWIN_qFast[j][i] = (uint16_t)invFast;
-
-      uint8_t s = 0;
-      uint64_t prod64 = (uint64_t)(uint32_t)dxWIN[j][i] * (uint64_t)invFast;
-      while (prod64 > 0x7FFFFFFFull && s < 31) { ++s; prod64 >>= 1; }
-      tMulShiftFast[j][i] = s;
-
-      // Linear slope in y per Q8-Hz for fast linear path
-      int64_t slopeLL = llroundl(d20_ld * (long double)(1 << AMP_COMP_FAST_SLOPE_FRAC) / (long double)dxWIN[j][i]);
-      if (slopeLL > (int64_t)INT32_MAX) slopeLL = (int64_t)INT32_MAX;
-      if (slopeLL < (int64_t)INT32_MIN) slopeLL = (int64_t)INT32_MIN;
-      slopeDx_fast[j][i] = (int32_t)slopeLL;
-
-      int64_t aFastLL = llroundl(aN_ld * (long double)(1 << AMP_COMP_FAST_COEFF_FRAC));
+      int64_t aFastLL = llroundl(aN_ld * (long double)(1 << T_FRAC));
       if (aFastLL > (int64_t)INT32_MAX) aFastLL = (int64_t)INT32_MAX;
       if (aFastLL < (int64_t)INT32_MIN) aFastLL = (int64_t)INT32_MIN;
       aQWIN_fast[j][i] = (int32_t)aFastLL;
 
       // Derive b so that a + b = (y2 - y0) in fast scaling => exact match at t=1
-      int64_t d20_int = ((int64_t)ampCompArray[j][i + 2] - (int64_t)ampCompArray[j][i]) << AMP_COMP_FAST_COEFF_FRAC;
+      int64_t d20_int = ((int64_t)ampCompArray[j][i + 2] - (int64_t)ampCompArray[j][i]) << T_FRAC;
       int64_t bFastLL = d20_int - aFastLL;
       if (bFastLL > (int64_t)INT32_MAX) bFastLL = (int64_t)INT32_MAX;
       if (bFastLL < (int64_t)INT32_MIN) bFastLL = (int64_t)INT32_MIN;
@@ -203,7 +186,7 @@ static void precomputeCoefficients() {
 void precomputeCoefficients_OLD() {
   for (int j = 0; j < NUM_OSCILLATORS; j++) {
     // Precompute precise float quadratic coefficients (original model)
-    for (int i = 0; i < ampCompTableSize - 2; i++) {
+    for (int i = 0; i < ampCompTableSize - 1; i++) {
       // Detect sentinel points and synthesize a reasonable third point near the cap
       if (ampCompFrequencyArray[j][i + 1] >= AMP_COMP_SENTINEL_FREQ_Q) {
         ampCompFrequencyArray[j][i + 1] = AMP_COMP_MAX_HZ_Q;
@@ -262,7 +245,7 @@ void precomputeCoefficients_OLD() {
         (slopeSpan > 0.4);
     }
     // Precompute per-window normalized quadratic coefficients (32-bit runtime)
-    for (int i = 0; i < ampCompTableSize - 2; i++) {
+    for (int i = 0; i < ampCompTableSize - 1; i++) {
       double x0f = (double)ampCompFrequencyArray[j][i]     / (double)(1u << FREQ_FRAC_BITS);
       double x1f = (double)ampCompFrequencyArray[j][i + 1] / (double)(1u << FREQ_FRAC_BITS);
       double x2f = (double)ampCompFrequencyArray[j][i + 2] / (double)(1u << FREQ_FRAC_BITS);
@@ -376,29 +359,6 @@ void precomputeCoefficients_OLD() {
 // 4186.00, 2164,
 // 8372.01, 2425,
 // 30000.00, 2500.00,
-// };
-
-// float freq_to_vco_array[] = {    // 10000 divisions
-// 0, 1,
-// 20.60, 88,
-// 21.83, 164,
-// 32.70, 800,
-// 43.65, 1184,
-// 65.41, 1848,
-// 87.31, 2288,
-// 130.81, 2928,
-// 174.61, 3388,
-// 261.63, 4076,
-// 349.23, 4588,
-// 523.25, 5288,
-// 698.46, 5796,
-// 1046.50, 6484,
-// 1396.91, 6956,
-// 2093.00, 7576,
-// 4186.00, 8656,
-// 8372.01, 9700,
-// 30000.00, 9999,
-// 50000.00, 9999,
 // };
 
 // float freq_to_vco_array[] = {    // 10000 divisions
