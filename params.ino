@@ -130,26 +130,15 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
 
     case 45:
-      LFO2toPW = paramValue;
-      LFO2toPWM_formula = (float)1 / 512 * LFO2toPW;
-      LFO2toPWM_formula_q24 = ((int32_t)LFO2toPW << 24) / 512;
+      LFO2toPW = (int16_t)paramValue;
       break;
 
     case 46:
-      ADSR1toPWM = paramValue - 512;
-      ADSR1toPWM_formula = (float)1 / 512 * ADSR1toPWM;
-      // Bake the /4 factor used at call site into the fixed-point formula (512*4 = 2048)
-      ADSR1toPWM_formula_q24 = ((int32_t)ADSR1toPWM << 24) / 2048;
+      ADSR1toPWM = (int16_t)paramValue - 512;
       break;
 
     case 47:
       ADSR1toDETUNE1 = paramValue;
-      ADSR1toDETUNE1_formula = (float)1 / 1080000 * (int16_t)ADSR1toDETUNE1;
-      // Precompute fixed-point scale to avoid divide in hot path: (ADSR1toDETUNE1 * 2^24) / 1080000
-      {
-        int64_t num = ((int64_t)(int16_t)ADSR1toDETUNE1 << 24) + (1080000 / 2);
-        ADSR1toDETUNE1_scale_q24 = (int32_t)(num / 1080000);
-      }
       break;
 
     case 48:

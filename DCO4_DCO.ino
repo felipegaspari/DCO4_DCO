@@ -179,6 +179,7 @@ void loop1() {
     //  loop1_start_time = micros();
     // Serial.println("pre voice task");
     voice_task();
+    //voice_task_gold_reference();
     //voice_task_simple();
     //voice_task_debug();
     // Serial.println("post voice task");

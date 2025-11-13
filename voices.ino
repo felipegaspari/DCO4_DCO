@@ -1,5 +1,7 @@
 #include "include_all.h"
 
+#define COMPARE_CLK_DIV 1
+
 static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   int window = 0;
   for (int k = 0; k < ampCompTableSize - 2; ++k) {
@@ -37,15 +39,6 @@ static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   Serial.print(" cD="); Serial.print(cD, 6);
   Serial.println();
 }
-
-// (amp-comp debug removed after validation)
-
-// Simple optimization: cache last raw divider and reuse while it remains valid.
-// Validity check uses multiplication inequalities; no divides in steady state.
-static uint32_t last_raw_eight[NUM_OSCILLATORS] = {0xFFFFFFFF};
-static uint32_t last_raw_sys[NUM_OSCILLATORS] = {0xFFFFFFFF};
-
-// (removed) legacy Q16 ratio precompute tables; ratio is derived on the fly now
 
 #ifdef RUNNING_AVERAGE
 // RunningAverage object definitions for timing measurements
@@ -101,21 +94,28 @@ inline void voice_task() {
   unsigned long voice_task_start_time = micros();
 #endif
 
-  float calcPitchbend;
+  // Pre-calculate pitch bend as a Q24 value. This is done once per voice_task call.
+  int32_t calcPitchbend_q24;
 
 #ifdef RUNNING_AVERAGE
   unsigned long t_start = micros();
 #endif
-  // Fixed-point (Q24) normalization of pitch bend; convert to float once
-  // ((bend / 8192.0) - 1.0) ≈ ((bend << 11) - (1<<24)) / (1<<24)
-  int32_t bend_q24 = ((int32_t)midi_pitch_bend << 11) - (1 << 24);
-  calcPitchbend = ((float)bend_q24 / (float)(1 << 24)) * pitchBendMultiplier;
+  // Optimized: Perform pitch bend calculation entirely in fixed-point Q24.
+  // ((bend / 8192.0) - 1.0) * pitchBendMultiplier
+  // This avoids float conversions and multiplications in the hot path.
+  int32_t bend_normalized_q24 = ((int32_t)midi_pitch_bend << 11) - (1 << 24);
+  calcPitchbend_q24 = (int32_t)(((int64_t)bend_normalized_q24 * pitchBendMultiplier_q24) >> 24);
 #ifdef RUNNING_AVERAGE
   ra_pitchbend.addValue((float)(micros() - t_start));
 #endif
 
   last_midi_pitch_bend = midi_pitch_bend;
   LAST_DETUNE = DETUNE;
+
+  // Hoist PWM parameters out of the loop. This is critical for performance,
+  // as it reads the volatile LFO2toPW variable only once per task run.
+  const int16_t local_ADSR1toPWM = ADSR1toPWM;
+  const int16_t local_LFO2toPW = LFO2toPW;
 
   for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
 
@@ -141,12 +141,12 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_osc2 = micros();
 #endif
-      // Fixed-point (Q24) intermediate for OSC2 detune; convert to float once
+      // Optimized: Calculate OSC2 detune in Q24 and keep it there.
+      // The float conversion has been removed as it is no longer needed.
       // detune = 1.0 + 0.0002 * (256 - val)
       static constexpr int32_t DETUNE_SCALE_Q24 = (int32_t)(0.0002f * (float)(1 << 24) + 0.5f);
       int32_t detune_steps = ((int)256 - OSC2DetuneVal);
       int32_t detune_q24 = (1 << 24) + (detune_steps * DETUNE_SCALE_Q24);
-      OSC2_detune = (float)detune_q24 / (float)(1 << 24);
 #ifdef RUNNING_AVERAGE
       ra_osc2_detune.addValue((float)(micros() - t_osc2));
 #endif
@@ -269,7 +269,7 @@ inline void voice_task() {
 #endif
       // Combine modifiers in Q24 (faithful to original float path)
       int32_t detune_fifo_q24 = DETUNE_INTERNAL_FIFO_q24;
-      int32_t calcPitchbend_q24 = (int32_t)(calcPitchbend * (float)(1 << 24));
+      
       // 1.00001f in Q24 (epsilon ≈ 168 LSBs)
       // Use detune delta (DETUNE_INTERNAL_FIFO - 1.0) to avoid double baseline
       int64_t detune_delta_q24 = (int64_t)detune_fifo_q24 - (int64_t)Q24_ONE;
@@ -322,11 +322,9 @@ inline void voice_task() {
       ra_freq_scaling.addValue((float)(micros() - t_freq_scaling));
 #endif
 
-      // Removed float clamps; downstream uses fixed-point freq_q18/freq_q16
-
-      /* FIN */
-
-      // voice_task_2_time = micros() - voice_task_start_time;
+      // Convert from Q24 fixed-point to float for the simple divider calculation.
+      float freq = (float)freq_q24_A / (float)(1 << 24);
+      float freq2 = (float)freq_q24_B / (float)(1 << 24);
 
       uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
       uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
@@ -340,80 +338,81 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_clk_div = micros();
 #endif
-      // Integer clock divider using direct divide each cycle
+      // Final, Corrected Optimization: Use 32-bit reciprocal multiplication.
+      // This is division-free in the hot path and provides high precision.
       uint32_t clk_div1;
       if (freq_q24_A <= 0) {
         clk_div1 = 0;
       } else {
-        const uint64_t N_eight = ((uint64_t)eightSysClock_Hz_u << 24);
-        uint32_t prevR = last_raw_eight[DCO_A];
-        uint32_t rawA;
-        if (prevR != 0xFFFFFFFF && prevR != 0) {
-          uint64_t f = (uint64_t)freq_q24_A;
-          if ((f * (uint64_t)prevR) <= N_eight && (f * (uint64_t)(prevR + 1)) > N_eight) {
-            rawA = prevR;
-          } else {
-            rawA = (uint32_t)(N_eight / f);
-            last_raw_eight[DCO_A] = rawA;
-          }
-        } else {
-          rawA = (uint32_t)(N_eight / (uint64_t)freq_q24_A);
-          last_raw_eight[DCO_A] = rawA;
-        }
-        clk_div1 = (rawA > eightPioPulseLength) ? (rawA - eightPioPulseLength) : 0;
+        uint32_t freq_q20 = freq_q24_A >> 4;
+        if (freq_q20 == 0) freq_q20 = 1;
+        // Scale frequency and calculate reciprocal with a single 32-bit division.
+        uint32_t d = freq_q20 >> 10;
+        if (d == 0) d = 1;
+        uint32_t recip = (1U << 30) / d;
+        // Final calculation is a fast multiply and shift.
+        uint32_t raw_div = (uint32_t)(((uint64_t)eightSysClock_Hz_u * recip) >> 20);
+        clk_div1 = (raw_div > eightPioPulseLength) ? (raw_div - eightPioPulseLength) : 0;
       }
+
+      #if COMPARE_CLK_DIV
+      if (i == 0) { // Only print for the first voice to avoid spam
+        uint32_t clk_div_float = calculate_clk_div_float(freq_q24_A, true);
+        int32_t diff = clk_div1 - clk_div_float;
+        if (diff != 0) {
+          Serial.print("[CLKDIV] f_q24="); Serial.print((long)freq_q24_A);
+          Serial.print(" fast="); Serial.print(clk_div1);
+          Serial.print(" float="); Serial.print(clk_div_float);
+          Serial.print(" diff="); Serial.println(diff);
+        }
+      }
+      #endif
 
       register uint32_t clk_div2;
       uint32_t phaseDelay;
 
       if (oscSync > 1) {
-
-        // clk_div2_raw in Q24
-        uint32_t clk_div2_raw = 0;
-        if (freq_q24_B > 0) {
-          const uint64_t N_sys = ((uint64_t)sysClock_Hz << 24);
-          uint32_t prevRsys = last_raw_sys[DCO_B];
-          if (prevRsys != 0xFFFFFFFF && prevRsys != 0) {
-            uint64_t fB = (uint64_t)freq_q24_B;
-            if ((fB * (uint64_t)prevRsys) <= N_sys && (fB * (uint64_t)(prevRsys + 1)) > N_sys) {
-              clk_div2_raw = prevRsys;
-            } else {
-              clk_div2_raw = (uint32_t)(N_sys / fB);
-              last_raw_sys[DCO_B] = clk_div2_raw;
-            }
-          } else {
-            clk_div2_raw = (uint32_t)(N_sys / (uint64_t)freq_q24_B);
-            last_raw_sys[DCO_B] = clk_div2_raw;
-          }
+        if (freq_q24_B <= 0) {
+          clk_div2 = 0;
+        } else {
+          uint32_t freq_q20 = freq_q24_B >> 4;
+          if (freq_q20 == 0) freq_q20 = 1;
+          uint32_t d = freq_q20 >> 10;
+          if (d == 0) d = 1;
+          uint32_t recip = (1U << 30) / d;
+          uint32_t raw_div = (uint32_t)(((uint64_t)sysClock_Hz * recip) >> 20);
+          uint32_t base = (raw_div > pioPulseLength) ? (raw_div - pioPulseLength) : 0;
+          phaseDelay = (uint32_t)(((uint64_t)base * phaseAlignOSC2 * RECIP_180_Q24) >> 24);
+          uint32_t adj = (base > phaseDelay) ? (base - phaseDelay) : 0;
+          clk_div2 = adj / 8U;
         }
-        uint32_t base = (clk_div2_raw > pioPulseLength) ? (clk_div2_raw - pioPulseLength) : 0;
-        phaseDelay = (uint32_t)(((uint64_t)base * (uint64_t)phaseAlignOSC2) / 180ULL);
-        uint32_t adj = (base > phaseDelay) ? (base - phaseDelay) : 0;
-        clk_div2 = (uint32_t)(adj / 8U);
       } else {
         if (freq_q24_B <= 0) {
           clk_div2 = 0;
         } else {
-          const uint64_t N_eight = ((uint64_t)eightSysClock_Hz_u << 24);
-          uint32_t prevRe = last_raw_eight[DCO_B];
-          uint32_t rawB;
-          if (prevRe != 0xFFFFFFFF && prevRe != 0) {
-            uint64_t fB = (uint64_t)freq_q24_B;
-            if ((fB * (uint64_t)prevRe) <= N_eight && (fB * (uint64_t)(prevRe + 1)) > N_eight) {
-              rawB = prevRe;
-            } else {
-              rawB = (uint32_t)(N_eight / fB);
-              last_raw_eight[DCO_B] = rawB;
-            }
-          } else {
-            rawB = (uint32_t)(N_eight / (uint64_t)freq_q24_B);
-            last_raw_eight[DCO_B] = rawB;
-          }
-          clk_div2 = (rawB > eightPioPulseLength) ? (rawB - eightPioPulseLength) : 0;
+          uint32_t freq_q20 = freq_q24_B >> 4;
+          if (freq_q20 == 0) freq_q20 = 1;
+          uint32_t d = freq_q20 >> 10;
+          if (d == 0) d = 1;
+          uint32_t recip = (1U << 30) / d;
+          uint32_t raw_div = (uint32_t)(((uint64_t)eightSysClock_Hz_u * recip) >> 20);
+          clk_div2 = (raw_div > eightPioPulseLength) ? (raw_div - eightPioPulseLength) : 0;
         }
       }
-      if (freq_q24_B <= 0)
-        clk_div2 = 0;
+
+      #if COMPARE_CLK_DIV
+      if (i == 0) { // Only print for the first voice to avoid spam
+        uint32_t clk_div_float = calculate_clk_div_float(freq_q24_B, (oscSync > 1) ? false : true);
+        int32_t diff = clk_div2 - clk_div_float;
+         if (diff != 0) {
+          Serial.print("[CLKDIV2] f_q24="); Serial.print((long)freq_q24_B);
+          Serial.print(" fast="); Serial.print(clk_div2);
+          Serial.print(" float="); Serial.print(clk_div_float);
+          Serial.print(" diff="); Serial.println(diff);
+        }
+      }
+      #endif
+
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
 #endif
@@ -453,24 +452,24 @@ inline void voice_task() {
 
           // Periodic accuracy check against float reference (every ~100 ms)
           
-            if (i == 0) {
-              static unsigned long lastAmpDiffPrint = 0;
-              unsigned long now = micros();
-              if ((now - lastAmpDiffPrint) >= 100000) {
-                uint16_t y_fl_A = get_chan_level_lookup(freqFx_A, DCO_A);
-                float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
-                int32_t diff = (int32_t)y_fl_A - (uint16_t)chanLevel;
-                Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
-                Serial.print(" fHz="); Serial.print(fHzA, 3);
-                Serial.print(" F_Referencia="); Serial.print(y_fl_A);
-                Serial.print(" F_Actual="); Serial.print(chanLevel);
-                Serial.print(" diff="); Serial.println(diff);
-                if (diff > 50 || diff < -50) {
-                  amp_comp_debug_window(freqFx_A, DCO_A);
-                }
-                lastAmpDiffPrint = now;
-              }
-            }
+            // if (i == 0) {
+            //   static unsigned long lastAmpDiffPrint = 0;
+            //   unsigned long now = micros();
+            //   if ((now - lastAmpDiffPrint) >= 100000) {
+            //     uint16_t y_fl_A = get_chan_level_lookup(freqFx_A, DCO_A);
+            //     float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
+            //     int32_t diff = (int32_t)y_fl_A - (uint16_t)chanLevel;
+            //     Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
+            //     Serial.print(" fHz="); Serial.print(fHzA, 3);
+            //     Serial.print(" F_Referencia="); Serial.print(y_fl_A);
+            //     Serial.print(" F_Actual="); Serial.print(chanLevel);
+            //     Serial.print(" diff="); Serial.println(diff);
+            //     if (diff > 50 || diff < -50) {
+            //       amp_comp_debug_window(freqFx_A, DCO_A);
+            //     }
+            //     lastAmpDiffPrint = now;
+            //   }
+            // }
           
 
       // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
@@ -505,17 +504,22 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
           unsigned long t_pwm = micros();
 #endif
-          int32_t ADSR1toPW_delta = (ADSR1toPWM != 0) ? (int32_t)(((int64_t)ADSR1Level[i] * (int64_t)ADSR1toPWM_formula_q24) >> 24) : 0;
-          int32_t LFO2toPW_delta = (LFO2toPW != 0) ? (int32_t)(((int64_t)LFO2Level * (int64_t)LFO2toPWM_formula_q24) >> 24) : 0;
-          int32_t pw_calc = (int32_t)DIV_COUNTER_PW - 1 - LFO2toPW_delta - PW[0] + ADSR1toPW_delta;
+          // Optimized: This version avoids storing large intermediate products.
+          // The multiplication and shift are combined into one expression per modulator,
+          // allowing the compiler to make better use of registers.
+          int32_t adsr1_delta = ((int32_t)ADSR1Level[i] * local_ADSR1toPWM) >> 11;
+          int32_t lfo2_delta = ((int32_t)LFO2Level * local_LFO2toPW) >> 9;
+          int32_t pw_calc = (int32_t)DIV_COUNTER_PW - 1 - lfo2_delta - PW[0] + adsr1_delta;
+
           if (pw_calc < 0) pw_calc = 0;
           if (pw_calc > (int32_t)DIV_COUNTER_PW - 1) pw_calc = (int32_t)DIV_COUNTER_PW - 1;
           PW_PWM[i] = (uint16_t)pw_calc;
-          // PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
-          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[i], i));
 #ifdef RUNNING_AVERAGE
           ra_pwm_calculations.addValue((float)(micros() - t_pwm));
 #endif
+          // PW_PWM[i] = (uint16_t)constrain(DIV_COUNTER_PW - 1 - /*((float)ADSR3Level[i] * ADSR3toPWM_formula)*/ - ((float)LFO2Level * LFO2toPWM_formula) - PW /*+ RANDOMNESS1 + RANDOMNESS2*/, 0, DIV_COUNTER_PW-1);
+          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), get_PW_level_interpolated(PW_PWM[i], i));
+
         } else {
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
         }
@@ -606,7 +610,7 @@ inline void voice_task_simple() {
 
       // voice_task_3_time = micros() - voice_task_start_time;
 
-      uint32_t clk_div1 = (uint32_t)(((float)eightSysClock_Hz_u / freq) - eightPioPulseLength);
+      uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz_u / freq) - eightPioPulseLength);
       if (freq == 0)
         clk_div1 = 0;
 
@@ -619,7 +623,7 @@ inline void voice_task_simple() {
         phaseDelay = (clk_div2 - pioPulseLength) / 180 * phaseAlignOSC2;
         clk_div2 = (uint32_t)((clk_div2 - pioPulseLength - phaseDelay) / 8);
       } else {
-        clk_div2 = (uint32_t)(((float)eightSysClock_Hz_u / freq2) - eightPioPulseLength);
+        clk_div2 = (uint32_t)((eightSysClock_Hz_u / freq2) - eightPioPulseLength);
       }
       if (freq2 == 0)
         clk_div2 = 0;
@@ -628,22 +632,18 @@ inline void voice_task_simple() {
 
       uint16_t chanLevel, chanLevel2;
 
-      // Compute fixed-point Hz for amp-comp from float frequencies (fallback path)
-      int32_t fxA = (int32_t)(freq  > 0.0f ? (freq  * (float)(1u << FREQ_FRAC_BITS) + 0.5f) : 0.0f);
-      int32_t fxB = (int32_t)(freq2 > 0.0f ? (freq2 * (float)(1u << FREQ_FRAC_BITS) + 0.5f) : 0.0f);
-
       switch (syncMode) {
         case 0:
-          chanLevel = get_chan_level_optimized(fxA, DCO_A);
-          chanLevel2 = get_chan_level_optimized(fxB, DCO_B);
+          chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int32_t)(freq2 * 100), DCO_B);
           break;
         case 1:
-          chanLevel = get_chan_level_optimized((fxA > fxB ? fxA : fxB), DCO_A);
-          chanLevel2 = get_chan_level_optimized(fxB, DCO_B);
+          chanLevel = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int32_t)(freq2 * 100), DCO_B);
           break;
         case 2:
-          chanLevel = get_chan_level_optimized(fxA, DCO_A);
-          chanLevel2 = get_chan_level_optimized((fxA > fxB ? fxA : fxB), DCO_B);
+          chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
+          chanLevel2 = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_B);
           break;
       }
 
@@ -1489,4 +1489,148 @@ inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
   return (uint16_t)y;
+}
+
+// High-precision float reference calculation for clock dividers.
+static inline uint32_t calculate_clk_div_float(int64_t freq_q24, bool use_eight_sys_clock) {
+  if (freq_q24 <= 0) {
+    return 0;
+  }
+
+  long double freq_ld = (long double)freq_q24 / (long double)(1 << 24);
+  long double clock_ld = use_eight_sys_clock ? (long double)eightSysClock_Hz_u : (long double)sysClock_Hz;
+  
+  long double raw_div_ld = clock_ld / freq_ld;
+  
+  uint32_t pulse_len = use_eight_sys_clock ? eightPioPulseLength : pioPulseLength;
+
+  if (raw_div_ld < pulse_len) {
+    return 0;
+  }
+  return (uint32_t)(raw_div_ld - pulse_len);
+}
+
+inline void voice_task_gold_reference() {
+  for (int i = 0; i < NUM_VOICES; i++) {
+    uint32_t phaseDelay;
+
+    if (note_on_flag[i] == 1) {
+      note_on_flag_flag[i] = true;
+      note_on_flag[i] = 0;
+    }
+
+      uint8_t DCO_A = i * 2;
+      uint8_t DCO_B = (i * 2) + 1;
+
+      // --- High Precision Frequency Calculation (compatible with voice_task_simple) ---
+      uint8_t note1 = VOICE_NOTES[i] - 36 + OSC1_interval;
+      if (note1 > highestNote) {
+        note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
+      }
+      long double freq_ld = sNotePitches[note1];
+      
+      // Base frequency for OSC2 is the original note, which unison will modify.
+      long double freq2_ld = sNotePitches[VOICE_NOTES[i] - 36];
+
+      // High-precision unison detune calculation from first principles.
+      if (unisonDetune != 0) {
+          // Unison detune steps are 0.25 semitones = 25 cents.
+          long double cents_offset = (long double)unisonDetune * 0.12L;
+          long double unison_ratio_ld = powl(2.0L, cents_offset / 1200.0L);
+          freq2_ld *= unison_ratio_ld;
+          freq_ld *= unison_ratio_ld;
+      }
+
+      uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
+      uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
+      PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
+      PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
+      uint8_t sm1N = VOICE_TO_SM[DCO_A];
+      uint8_t sm2N = VOICE_TO_SM[DCO_B];
+
+      // --- High Precision Clock Divider Calculation (Inlined) ---
+      uint32_t clk_div1;
+      long double raw_div1_ld = (long double)eightSysClock_Hz_u / freq_ld;
+      clk_div1 = (raw_div1_ld > eightPioPulseLength) ? (uint32_t)(raw_div1_ld - eightPioPulseLength) : 0;
+
+      uint32_t clk_div2;
+
+      if (oscSync > 1) {
+          // This path uses sysClock_Hz
+          long double raw_div2_ld = (long double)sysClock_Hz / freq2_ld;
+          if (raw_div2_ld > pioPulseLength) {
+            long double phaseDelay_ld = (raw_div2_ld - (long double)pioPulseLength) / 180.0L * (long double)phaseAlignOSC2;
+            long double clk_div2_ld = (raw_div2_ld - (long double)pioPulseLength - phaseDelay_ld) / 8.0L;
+            clk_div2 = (uint32_t)clk_div2_ld;
+          } else {
+            clk_div2 = 0;
+          }
+      } else {
+          // This path uses eightSysClock_Hz_u
+          long double raw_div2_ld = (long double)eightSysClock_Hz_u / freq2_ld;
+          clk_div2 = (raw_div2_ld > eightPioPulseLength) ? (uint32_t)(raw_div2_ld - eightPioPulseLength) : 0;
+      }
+
+      // voice_task_4_time = micros() - voice_task_start_time;
+
+      uint16_t chanLevel, chanLevel2;
+
+      // Convert back to Q8 for amp comp lookup
+      int32_t fxA = (int32_t)(freq_ld > 0.0L ? (freq_ld * (long double)(1u << FREQ_FRAC_BITS) + 0.5L) : 0.0L);
+      int32_t fxB = (int32_t)(freq2_ld > 0.0L ? (freq2_ld * (long double)(1u << FREQ_FRAC_BITS) + 0.5L) : 0.0L);
+
+      switch (syncMode) {
+        case 0:
+          chanLevel = get_chan_level_lookup_fast(fxA, DCO_A);
+          chanLevel2 = get_chan_level_lookup_fast(fxB, DCO_B);
+          break;
+        case 1:
+          chanLevel = get_chan_level_lookup_fast((fxA > fxB ? fxA : fxB), DCO_A);
+          chanLevel2 = get_chan_level_lookup_fast(fxB, DCO_B);
+          break;
+        case 2:
+          chanLevel = get_chan_level_lookup_fast(fxA, DCO_A);
+          chanLevel2 = get_chan_level_lookup_fast((fxA > fxB ? fxA : fxB), DCO_B);
+          break;
+      }
+
+      // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
+
+      pio_sm_put(pioN_A, sm1N, clk_div1);
+      pio_sm_put(pioN_B, sm2N, clk_div2);
+      pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+      pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+
+      // Serial.println("VOICE TASK 5a");
+
+      if (note_on_flag_flag[i]) {
+        if (oscSync > 0) {
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+
+          if (oscSync > 1) {
+            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+            pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_x, 31));
+          }
+        }
+
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+      }
+
+      if (timer99microsFlag) {
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+      }
+
+      if (sqr1Status) {
+        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW_CENTER[i]);
+      } else {
+        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
+      }
+    
+    note_on_flag_flag[i] = false;
+  }
 }

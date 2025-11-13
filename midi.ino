@@ -25,6 +25,13 @@ void handleNoteOff(byte channel, byte pitch, byte velocity) {
 }
 
 void handleControlChange(byte channel, byte number, byte value) {
+  // CC #42 is used to set the pitch bend range in semitones.
+  if (number == 42) {
+    pitchBendRange = value;
+    // Optimized: Use fast fixed-point multiplication instead of float division.
+    pitchBendMultiplier_q24 = (int32_t)(((int64_t)pitchBendRange * RECIP_TWELVE_Q24));
+    pitchBendMultiplier = (float)pitchBendMultiplier_q24 / (float)(1 << 24);
+  }
 }
 
 void handleProgramChange(byte channel, byte program) {
