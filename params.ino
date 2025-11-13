@@ -40,13 +40,13 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
       oscSync = paramValue;
       if (oscSync < 2) {
         for (int i = 0; i < NUM_OSCILLATORS; i++) {
-          pio_sm_put(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pioPulseLength - correctionPioPulseLength);
+          pio_sm_put(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pioPulseLength);
           pio_sm_exec(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pio_encode_pull(false, false));
           pio_sm_exec(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pio_encode_out(pio_y, 31));
         }
       } else {
-        if (oscSync > 4) {
-          phaseAlignOSC2 = oscSync;
+        if (oscSync > 8) {
+          phaseAlignOSC2 = oscSync * 2;
         } else {
           switch (oscSync) {
             case 2:
@@ -57,6 +57,18 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
               break;
             case 4:
               phaseAlignOSC2 = 135;
+              break;
+            case 5:
+              phaseAlignOSC2 = 180;
+              break;
+            case 6:
+              phaseAlignOSC2 = 225;
+              break;
+            case 7:
+              phaseAlignOSC2 = 270;
+              break;
+            case 8:
+              phaseAlignOSC2 = 315;
               break;
             default:
               break;

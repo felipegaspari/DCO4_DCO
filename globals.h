@@ -131,8 +131,8 @@ int midi_pitch_bend = 8192, last_midi_pitch_bend = 8192;
 uint8_t pitchBendRange = 2;
 // Precompute 1/12 in Q24 for fast multiplier calculation
 static constexpr int32_t RECIP_TWELVE_Q24 = (int32_t)((1.0f / 12.0f) * (float)(1 << 24));
-// Precompute 1/180 in Q24 for fast phaseDelay calculation
-static constexpr uint32_t RECIP_180_Q24 = (uint32_t)(((1ULL << 24) + 90) / 180);
+// Precompute 1/360 in Q24 for fast phaseDelay calculation (full 0–360° range)
+static constexpr uint32_t RECIP_360_Q24 = (uint32_t)(((1ULL << 24) + 180) / 360);
 float pitchBendMultiplier = 1.00f / 12.00f * (float)pitchBendRange;
 int32_t pitchBendMultiplier_q24 = 1 << 24;
 

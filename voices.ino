@@ -351,20 +351,34 @@ inline void voice_task() {
 #endif
       // Final, Corrected Optimization: Use 32-bit reciprocal multiplication.
       // This is division-free in the hot path and provides high precision.
-      uint32_t clk_div1;
-      if (freq_q24_A <= 0) {
-        clk_div1 = 0;
-      } else {
-        uint32_t freq_q20 = freq_q24_A >> 4;
-        if (freq_q20 == 0) freq_q20 = 1;
-        // Scale frequency and calculate reciprocal with a single 32-bit division.
-        uint32_t d = freq_q20 >> 10;
-        if (d == 0) d = 1;
-        uint32_t recip = (1U << 30) / d;
-        // Final calculation is a fast multiply and shift.
-        uint32_t raw_div = (uint32_t)(((uint64_t)eightSysClock_Hz_u * recip) >> 20);
-        clk_div1 = (raw_div > eightPioPulseLength) ? (raw_div - eightPioPulseLength) : 0;
-      }
+      //
+      // OSC1 fixed-point equivalent of:
+      //   total_cycles1   = sysClock_Hz / freq;
+      //   total_osr_val1  = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES;
+      //   clk_div1        = total_osr_val1 >> 3;   // / NUM_OSR_CHUNKS (8)
+      register uint32_t clk_div1 = 0;
+
+      // Convert Q24 frequency to Q20 and approximate 1/f in Q20 with a single 32-bit division.
+      uint32_t freq_q20 = (uint32_t)(freq_q24_A >> 4);
+      if (freq_q20 == 0) freq_q20 = 1;
+
+      uint32_t d = freq_q20 >> 10;  // ≈ freq * 2^10
+      if (d == 0) d = 1;
+
+      // recip ≈ 2^20 / freq (Q20 approximation of 1/f)
+      uint32_t recip = (1U << 30) / d;
+
+      // total_cycles1 ≈ sysClock_Hz / freq, with rounding
+      uint32_t total_cycles1 =
+        (uint32_t)((((uint64_t)sysClock_Hz * (uint64_t)recip) + (1ULL << 19)) >> 20);
+
+      // Direct fixed-point equivalent of:
+      //   total_osr_val1 = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES;
+      //   clk_div1       = total_osr_val1 >> 3;
+      uint32_t total_osr_val1 =
+        total_cycles1 - (T_HIGH_TOTAL_CYCLES + T_LOW_OVERHEAD_CYCLES);
+      // Divide by 8 with rounding to nearest
+      clk_div1 = (total_osr_val1 + 4U) >> 3;
 
 #if COMPARE_CLK_DIV
       if (i == 0) {  // Only print for the first voice to avoid spam
@@ -383,37 +397,50 @@ inline void voice_task() {
       }
 #endif
 
-      register uint32_t clk_div2;
-      uint32_t phaseDelay;
+      register uint32_t clk_div2 = 0;
+      uint32_t phaseDelay = 0;
 
-      if (oscSync > 1) {
-        if (freq_q24_B <= 0) {
-          clk_div2 = 0;
-        } else {
-          uint32_t freq_q20 = freq_q24_B >> 4;
-          if (freq_q20 == 0) freq_q20 = 1;
-          uint32_t d = freq_q20 >> 10;
-          if (d == 0) d = 1;
-          uint32_t recip = (1U << 30) / d;
-          uint32_t raw_div = (uint32_t)(((uint64_t)sysClock_Hz * recip) >> 20);
-          uint32_t base = (raw_div > pioPulseLength) ? (raw_div - pioPulseLength) : 0;
-          phaseDelay = (uint32_t)(((uint64_t)base * phaseAlignOSC2 * RECIP_180_Q24) >> 24);
-          uint32_t adj = (base > phaseDelay) ? (base - phaseDelay) : 0;
-          clk_div2 = adj / 8U;
-        }
+
+      // OSC2 fixed-point equivalent of:
+      //   total_cycles2   = sysClock_Hz / freq2;
+      //   phaseDelay      = (oscSync > 1) ? total_cycles2 * INV_DEGREES_IN_CIRCLE * phaseAlignOSC2 : 0;
+      //   y_val2          = pioPulseLength + phaseDelay;
+      //   high_total2     = y_val2 + T_HIGH_OVERHEAD_CYCLES;
+      //   total_osr_val2  = total_cycles2 - high_total2 - T_LOW_OVERHEAD_CYCLES;
+      //   clk_div2        = total_osr_val2 >> 3;
+
+      // 1) total_cycles2 ≈ sysClock_Hz / freq2
+      uint32_t freq_q20_B = (uint32_t)(freq_q24_B >> 4);
+      if (freq_q20_B == 0) freq_q20_B = 1;
+
+      uint32_t d_B = freq_q20_B >> 10;  // ≈ freq2 * 2^10
+      if (d_B == 0) d_B = 1;
+
+      // recip ≈ 2^20 / freq2 (Q20 approximation of 1/f2)
+      uint32_t recip_B = (1U << 30) / d_B;
+
+      uint32_t total_cycles2 =
+        (uint32_t)((((uint64_t)sysClock_Hz * (uint64_t)recip_B) + (1ULL << 19)) >> 20);
+
+      // 2) Dynamic phase delay in cycles when sync is active.
+      if (oscSync > 1 && phaseAlignOSC2 != 0) {
+        phaseDelay = (uint32_t)(((uint64_t)total_cycles2 * (uint64_t)phaseAlignOSC2 * (uint64_t)RECIP_360_Q24) >> 24);
       } else {
-        if (freq_q24_B <= 0) {
-          clk_div2 = 0;
-        } else {
-          uint32_t freq_q20 = freq_q24_B >> 4;
-          if (freq_q20 == 0) freq_q20 = 1;
-          uint32_t d = freq_q20 >> 10;
-          if (d == 0) d = 1;
-          uint32_t recip = (1U << 30) / d;
-          uint32_t raw_div = (uint32_t)(((uint64_t)eightSysClock_Hz_u * recip) >> 20);
-          clk_div2 = (raw_div > eightPioPulseLength) ? (raw_div - eightPioPulseLength) : 0;
-        }
+        phaseDelay = 0;
       }
+
+      // 3) High portion including phase delay and high-period overhead.
+      uint32_t y_val2 = pioPulseLength + phaseDelay;
+      uint32_t high_total_cycles2 = y_val2 + T_HIGH_OVERHEAD_CYCLES;
+
+      // 4) Remaining low portion with low-period overhead, split into 8 OSR chunks.
+      // Fixed-point equivalent of:
+      //   total_osr_val2 = total_cycles2 - high_total_cycles2 - T_LOW_OVERHEAD_CYCLES;
+      //   clk_div2       = total_osr_val2 >> 3;
+      uint32_t total_osr_val2 =
+        total_cycles2 - (high_total_cycles2 + T_LOW_OVERHEAD_CYCLES);
+      // Divide by 8 with rounding to nearest
+      clk_div2 = (total_osr_val2 + 4U) >> 3;  // / NUM_OSR_CHUNKS (8)
 
 #if COMPARE_CLK_DIV
       if (i == 0) {  // Only print for the first voice to avoid spam
@@ -501,6 +528,24 @@ inline void voice_task() {
       // Serial.println("VOICE TASK 5a");
 
       if (note_on_flag_flag[i]) {
+        // --- Reverse Calculation to find the expected output frequency ---
+        uint32_t actual_total_osr_val = clk_div1 * NUM_OSR_CHUNKS;  // This is what the PIO actually gets
+        uint32_t actual_total_period = T_HIGH_TOTAL_CYCLES + actual_total_osr_val + T_LOW_OVERHEAD_CYCLES;
+        float expected_freq = (double)sysClock_Hz / (double)actual_total_period;
+
+        // --- Print Diagnostic Report ---
+        Serial.println("----------------[ DCO DEBUG REPORT ]----------------");
+        Serial.printf("Target Freq In:   %.2f Hz\n", (float)freq_q24_A / (float)(1 << 24));
+        Serial.printf("Total Cycles Calc:  %lu (Target for the whole period)\n", total_cycles1);
+        Serial.printf("High Period Fixed:  %lu cycles (From constants)\n", T_HIGH_TOTAL_CYCLES);
+        Serial.printf("Low Overhead Fixed: %lu cycles (From constants)\n", T_LOW_OVERHEAD_CYCLES);
+        Serial.printf("Total OSR Delay:    %lu cycles (Remaining for loops)\n", total_osr_val1);
+        Serial.printf("clk_div (Average):  %lu (Value sent to PIO)\n", clk_div1);
+        Serial.println("---");
+        Serial.printf("Actual Period Gen:  %lu cycles (High + (clk_div*8) + Low)\n", actual_total_period);
+        Serial.printf("==> Expected Freq Out: %.2f Hz\n", expected_freq);
+        Serial.println("----------------------------------------------------\n");
+
         if (oscSync == 1) {
           pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
           pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
@@ -508,14 +553,13 @@ inline void voice_task() {
 
         if (oscSync > 1) {
           const uint32_t sm_mask = (1u << sm1N) | (1u << sm2N);
-          uint32_t phaseDelayCalcClkDiv = pioPulseLength + phaseDelay - correctionPioPulseLength;
 
           pio_set_sm_mask_enabled(pioN_A, sm_mask, false);
-          
+
           pio_sm_clear_fifos(pioN_B, sm2N);
           pio_sm_clear_fifos(pioN_A, sm1N);
 
-          pio_sm_put(pioN_B, sm2N, phaseDelayCalcClkDiv);
+          pio_sm_put(pioN_B, sm2N, y_val2);
           pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
           pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
 
@@ -527,7 +571,7 @@ inline void voice_task() {
           pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(18 + offset[pioNumberA]));  // OSC Sync MODE
           pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(18 + offset[pioNumberB]));
 
-          
+
           pio_set_sm_mask_enabled(pioN_A, sm_mask, true);
         }
         // if (oscSync > 0) {
@@ -710,7 +754,7 @@ inline void voice_task_simple() {
           pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
 
           if (oscSync > 1) {
-            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay);
             pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
             pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
             pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_x, 31));
@@ -1667,7 +1711,7 @@ inline void voice_task_gold_reference() {
         pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
 
         if (oscSync > 1) {
-          pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+          pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay);
           pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
           pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
           pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_x, 31));
