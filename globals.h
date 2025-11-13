@@ -27,7 +27,15 @@ static constexpr uint16_t DIV_COUNTER_PW = 1024;
 static constexpr uint32_t pioPulseLength = 4000;
 static constexpr uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
 static constexpr uint32_t eightPioPulseLength = pioPulseLength / 8;
-static constexpr uint32_t correctionPioPulseLength = 7;
+
+// --- PIO Program Timing Constants ---
+static constexpr uint32_t T_HIGH_OVERHEAD_CYCLES = 2;
+static constexpr uint32_t T_LOW_OVERHEAD_CYCLES = 9;
+static constexpr uint32_t NUM_OSR_CHUNKS = 8;
+
+// --- DERIVED CONSTANTS (Pre-calculated at compile time ) ---
+// The total, real duration of the high pulse in cycles.
+static constexpr uint32_t T_HIGH_TOTAL_CYCLES = pioPulseLength + T_HIGH_OVERHEAD_CYCLES;
 
 static constexpr uint32_t halfSysClock_Hz = sysClock_Hz / 2;
 static constexpr uint32_t eightSysClock_Hz_u = sysClock_Hz / 8;
@@ -49,7 +57,7 @@ uint8_t syncMode = 0;
 uint8_t oscSync = 0;
 volatile uint8_t polyMode = 1;
 
-uint16_t phaseAlignOSC2 = 0;
+volatile uint16_t phaseAlignOSC2 = 0;
 // (removed) phaseAlignScale_Q16; use direct computation at call-site
 
 uint8_t unisonDetune = 10;

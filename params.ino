@@ -45,23 +45,26 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
           pio_sm_exec(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], pio_encode_out(pio_y, 31));
         }
       } else {
-        if (oscSync > 3) {
+        if (oscSync > 4) {
           phaseAlignOSC2 = oscSync;
         } else {
           switch (oscSync) {
             case 2:
-              phaseAlignOSC2 = 134;
-              break;
+            phaseAlignOSC2 = 45;
+            break;
             case 3:
-              phaseAlignOSC2 = 179;
+              phaseAlignOSC2 = 90;
+              break;
+            case 4:
+              phaseAlignOSC2 = 135;
               break;
             default:
               break;
           }
         }
-        for (int i = 0; i < NUM_OSCILLATORS; i++) {
-          note_on_flag[i] = 1;
-        }
+      }
+      for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+        note_on_flag[i] = 1;
       }
       break;
 

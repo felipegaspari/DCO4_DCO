@@ -1,12 +1,11 @@
 #include "include_all.h"
 
-#define COMPARE_CLK_DIV 1
+#define COMPARE_CLK_DIV 0
 
 static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   int window = 0;
   for (int k = 0; k < ampCompTableSize - 2; ++k) {
-    if (ampCompFrequencyArray[voiceN][k] <= x &&
-        x <= ampCompFrequencyArray[voiceN][k + 2]) {
+    if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
       window = k;
       break;
     }
@@ -25,18 +24,30 @@ static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   double bD = bCoeffD[voiceN][window];
   double cD = cCoeffD[voiceN][window];
 
-  Serial.print("[AMPWINDBG] v="); Serial.print(voiceN);
-  Serial.print(" win="); Serial.print(window);
-  Serial.print(" useDouble="); Serial.print(useDouble ? "1" : "0");
-  Serial.print(" x0="); Serial.print(x0);
-  Serial.print(" x1="); Serial.print(x1);
-  Serial.print(" x2="); Serial.print(x2);
-  Serial.print(" y0="); Serial.print(y0);
-  Serial.print(" y1="); Serial.print(y1);
-  Serial.print(" y2="); Serial.print(y2);
-  Serial.print(" aD="); Serial.print(aD, 6);
-  Serial.print(" bD="); Serial.print(bD, 6);
-  Serial.print(" cD="); Serial.print(cD, 6);
+  Serial.print("[AMPWINDBG] v=");
+  Serial.print(voiceN);
+  Serial.print(" win=");
+  Serial.print(window);
+  Serial.print(" useDouble=");
+  Serial.print(useDouble ? "1" : "0");
+  Serial.print(" x0=");
+  Serial.print(x0);
+  Serial.print(" x1=");
+  Serial.print(x1);
+  Serial.print(" x2=");
+  Serial.print(x2);
+  Serial.print(" y0=");
+  Serial.print(y0);
+  Serial.print(" y1=");
+  Serial.print(y1);
+  Serial.print(" y2=");
+  Serial.print(y2);
+  Serial.print(" aD=");
+  Serial.print(aD, 6);
+  Serial.print(" bD=");
+  Serial.print(bD, 6);
+  Serial.print(" cD=");
+  Serial.print(cD, 6);
   Serial.println();
 }
 
@@ -58,7 +69,7 @@ RunningAverage ra_clk_div_calc(2000);
 
 unsigned long last_timing_print = 0;
 unsigned long voice_task_max_time = 0;
-const unsigned long TIMING_PRINT_INTERVAL = 1000; // Print every 5 seconds
+const unsigned long TIMING_PRINT_INTERVAL = 1000;  // Print every 5 seconds
 #endif
 
 void init_voices() {
@@ -175,12 +186,12 @@ inline void voice_task() {
           // Derive endpoints directly in Q24
           int64_t startA_q24 = portamento_cur_freq_q24[DCO_A];
           int64_t startB_q24 = portamento_cur_freq_q24[DCO_B];
-          int64_t stopA_q24  = sNotePitches_q24[note1];
-          int64_t stopB_q24  = sNotePitches_q24[note2];
+          int64_t stopA_q24 = sNotePitches_q24[note1];
+          int64_t stopB_q24 = sNotePitches_q24[note2];
           portamento_start_q24[DCO_A] = startA_q24;
           portamento_start_q24[DCO_B] = startB_q24;
-          portamento_stop_q24[DCO_A]  = stopA_q24;
-          portamento_stop_q24[DCO_B]  = stopB_q24;
+          portamento_stop_q24[DCO_A] = stopA_q24;
+          portamento_stop_q24[DCO_B] = stopB_q24;
           portamento_cur_freq_q24[DCO_A] = startA_q24;
           portamento_cur_freq_q24[DCO_B] = startB_q24;
 
@@ -201,8 +212,8 @@ inline void voice_task() {
           portamento_cur_freq_q24[DCO_B] = portamento_stop_q24[DCO_B];
           portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
           portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
-          portamento_stop_q24[DCO_A]  = portamento_cur_freq_q24[DCO_A];
-          portamento_stop_q24[DCO_B]  = portamento_cur_freq_q24[DCO_B];
+          portamento_stop_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
+          portamento_stop_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
         } else {
           // Absolute-time base in Q24
           int32_t elapsed_us = (int32_t)portamentoTimer[i];
@@ -214,11 +225,11 @@ inline void voice_task() {
       } else {
         portamento_cur_freq_q24[DCO_A] = sNotePitches_q24[note1];
         portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
-        portamento_stop_q24[DCO_A]  = portamento_cur_freq_q24[DCO_A];
+        portamento_stop_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
 
         portamento_cur_freq_q24[DCO_B] = sNotePitches_q24[note2];
         portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
-        portamento_stop_q24[DCO_B]  = portamento_cur_freq_q24[DCO_B];
+        portamento_stop_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
       }
 #ifdef RUNNING_AVERAGE
       ra_portamento.addValue((float)(micros() - t_portamento));
@@ -269,7 +280,7 @@ inline void voice_task() {
 #endif
       // Combine modifiers in Q24 (faithful to original float path)
       int32_t detune_fifo_q24 = DETUNE_INTERNAL_FIFO_q24;
-      
+
       // 1.00001f in Q24 (epsilon ≈ 168 LSBs)
       // Use detune delta (DETUNE_INTERNAL_FIFO - 1.0) to avoid double baseline
       int64_t detune_delta_q24 = (int64_t)detune_fifo_q24 - (int64_t)Q24_ONE;
@@ -286,11 +297,11 @@ inline void voice_task() {
       //   freq2 *= OSC2_detune * interpolatePitchMultiplier(freq2Modifiers)/multiplierTableScale;
       // High-resolution fixed-point x with truncation toward zero (matches original float cast):
       // xQ16 = trunc((q24 * scale) / 2^8) to carry 16 fractional bits of table-units
-      int64_t x1_q24s = (freqModifiers_q24  * (int64_t)multiplierTableScale); // Q24 * int -> Q24
-      int64_t x2_q24s = (freq2Modifiers_q24 * (int64_t)multiplierTableScale); // Q24 * int -> Q24
-      int32_t xScaled1_Q16 = (x1_q24s >= 0) ? (int32_t)(x1_q24s >> 8) : (int32_t)(- ((-x1_q24s) >> 8));
-      int32_t xScaled2_Q16 = (x2_q24s >= 0) ? (int32_t)(x2_q24s >> 8) : (int32_t)(- ((-x2_q24s) >> 8));
-      #if PITCH_USE_RATIO_Q16
+      int64_t x1_q24s = (freqModifiers_q24 * (int64_t)multiplierTableScale);   // Q24 * int -> Q24
+      int64_t x2_q24s = (freq2Modifiers_q24 * (int64_t)multiplierTableScale);  // Q24 * int -> Q24
+      int32_t xScaled1_Q16 = (x1_q24s >= 0) ? (int32_t)(x1_q24s >> 8) : (int32_t)(-((-x1_q24s) >> 8));
+      int32_t xScaled2_Q16 = (x2_q24s >= 0) ? (int32_t)(x2_q24s >> 8) : (int32_t)(-((-x2_q24s) >> 8));
+#if PITCH_USE_RATIO_Q16
       int32_t ratio1_Q16 = interpolateRatioQ16_cached(xScaled1_Q16, DCO_A);
       int32_t ratio2_Q16 = interpolateRatioQ16_cached(xScaled2_Q16, DCO_B);
       freq_q24_A = (portamento_cur_freq_q24[DCO_A] * (int64_t)ratio1_Q16) >> 16;
@@ -300,7 +311,7 @@ inline void voice_task() {
       // combined_Q16 = round((ratio2_Q16 * detune_Q16) / 2^16)
       int32_t combined_Q16 = (int32_t)((((int64_t)ratio2_Q16 * (int64_t)detune_Q16) + (1LL << 15)) >> 16);
       freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16) >> 16;
-      #else
+#else
       int32_t yTab1 = interpolatePitchMultiplierIntQ16_cached(xScaled1_Q16, DCO_A);
       int32_t yTab2 = interpolatePitchMultiplierIntQ16_cached(xScaled2_Q16, DCO_B);
       // Convert yTab -> ratioQ16 using reciprocal-multiply (round((yTab<<16)/10000))
@@ -314,7 +325,7 @@ inline void voice_task() {
       int32_t detune_Q16_fb = (int32_t)((((int64_t)detune_q24) + 128) >> 8);
       int32_t combined_Q16_fb = (int32_t)((((int64_t)ratio2_Q16_fallback * (int64_t)detune_Q16_fb) + (1LL << 15)) >> 16);
       freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16_fb) >> 16;
-      #endif
+#endif
 
       // Per-cycle: no caching; compute dividers directly from current Q18 frequency
 
@@ -355,18 +366,22 @@ inline void voice_task() {
         clk_div1 = (raw_div > eightPioPulseLength) ? (raw_div - eightPioPulseLength) : 0;
       }
 
-      #if COMPARE_CLK_DIV
-      if (i == 0) { // Only print for the first voice to avoid spam
+#if COMPARE_CLK_DIV
+      if (i == 0) {  // Only print for the first voice to avoid spam
         uint32_t clk_div_float = calculate_clk_div_float(freq_q24_A, true);
         int32_t diff = clk_div1 - clk_div_float;
         if (diff != 0) {
-          Serial.print("[CLKDIV] f_q24="); Serial.print((long)freq_q24_A);
-          Serial.print(" fast="); Serial.print(clk_div1);
-          Serial.print(" float="); Serial.print(clk_div_float);
-          Serial.print(" diff="); Serial.println(diff);
+          Serial.print("[CLKDIV] f_q24=");
+          Serial.print((long)freq_q24_A);
+          Serial.print(" fast=");
+          Serial.print(clk_div1);
+          Serial.print(" float=");
+          Serial.print(clk_div_float);
+          Serial.print(" diff=");
+          Serial.println(diff);
         }
       }
-      #endif
+#endif
 
       register uint32_t clk_div2;
       uint32_t phaseDelay;
@@ -400,18 +415,22 @@ inline void voice_task() {
         }
       }
 
-      #if COMPARE_CLK_DIV
-      if (i == 0) { // Only print for the first voice to avoid spam
+#if COMPARE_CLK_DIV
+      if (i == 0) {  // Only print for the first voice to avoid spam
         uint32_t clk_div_float = calculate_clk_div_float(freq_q24_B, (oscSync > 1) ? false : true);
         int32_t diff = clk_div2 - clk_div_float;
-         if (diff != 0) {
-          Serial.print("[CLKDIV2] f_q24="); Serial.print((long)freq_q24_B);
-          Serial.print(" fast="); Serial.print(clk_div2);
-          Serial.print(" float="); Serial.print(clk_div_float);
-          Serial.print(" diff="); Serial.println(diff);
+        if (diff != 0) {
+          Serial.print("[CLKDIV2] f_q24=");
+          Serial.print((long)freq_q24_B);
+          Serial.print(" fast=");
+          Serial.print(clk_div2);
+          Serial.print(" float=");
+          Serial.print(clk_div_float);
+          Serial.print(" diff=");
+          Serial.println(diff);
         }
       }
-      #endif
+#endif
 
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
@@ -429,9 +448,9 @@ inline void voice_task() {
       int32_t freq_q16_B = (int32_t)((freq_q24_B + (1LL << 7)) >> 8);
       const int Q16_TO_FREQ_SHIFT = (16 - FREQ_FRAC_BITS);
       int32_t freqFx_A = (freq_q16_A >= 0) ? (freq_q16_A >> Q16_TO_FREQ_SHIFT)
-                                           : - ((-freq_q16_A) >> Q16_TO_FREQ_SHIFT);
+                                           : -((-freq_q16_A) >> Q16_TO_FREQ_SHIFT);
       int32_t freqFx_B = (freq_q16_B >= 0) ? (freq_q16_B >> Q16_TO_FREQ_SHIFT)
-                                           : - ((-freq_q16_B) >> Q16_TO_FREQ_SHIFT);
+                                           : -((-freq_q16_B) >> Q16_TO_FREQ_SHIFT);
       switch (syncMode) {
         case 0:
           chanLevel = get_chan_level_lookup_fast(freqFx_A, DCO_A);
@@ -450,27 +469,27 @@ inline void voice_task() {
       ra_get_chan_level.addValue((float)(micros() - t_chan_level));
 #endif
 
-          // Periodic accuracy check against float reference (every ~100 ms)
-          
-            // if (i == 0) {
-            //   static unsigned long lastAmpDiffPrint = 0;
-            //   unsigned long now = micros();
-            //   if ((now - lastAmpDiffPrint) >= 100000) {
-            //     uint16_t y_fl_A = get_chan_level_lookup(freqFx_A, DCO_A);
-            //     float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
-            //     int32_t diff = (int32_t)y_fl_A - (uint16_t)chanLevel;
-            //     Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
-            //     Serial.print(" fHz="); Serial.print(fHzA, 3);
-            //     Serial.print(" F_Referencia="); Serial.print(y_fl_A);
-            //     Serial.print(" F_Actual="); Serial.print(chanLevel);
-            //     Serial.print(" diff="); Serial.println(diff);
-            //     if (diff > 50 || diff < -50) {
-            //       amp_comp_debug_window(freqFx_A, DCO_A);
-            //     }
-            //     lastAmpDiffPrint = now;
-            //   }
-            // }
-          
+      // Periodic accuracy check against float reference (every ~100 ms)
+
+      // if (i == 0) {
+      //   static unsigned long lastAmpDiffPrint = 0;
+      //   unsigned long now = micros();
+      //   if ((now - lastAmpDiffPrint) >= 100000) {
+      //     uint16_t y_fl_A = get_chan_level_lookup(freqFx_A, DCO_A);
+      //     float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
+      //     int32_t diff = (int32_t)y_fl_A - (uint16_t)chanLevel;
+      //     Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
+      //     Serial.print(" fHz="); Serial.print(fHzA, 3);
+      //     Serial.print(" F_Referencia="); Serial.print(y_fl_A);
+      //     Serial.print(" F_Actual="); Serial.print(chanLevel);
+      //     Serial.print(" diff="); Serial.println(diff);
+      //     if (diff > 50 || diff < -50) {
+      //       amp_comp_debug_window(freqFx_A, DCO_A);
+      //     }
+      //     lastAmpDiffPrint = now;
+      //   }
+      // }
+
 
       // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
@@ -482,16 +501,45 @@ inline void voice_task() {
       // Serial.println("VOICE TASK 5a");
 
       if (note_on_flag_flag[i]) {
-        if (oscSync > 0) {
+        if (oscSync == 1) {
           pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
           pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
-
-          if (oscSync > 1) {
-            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
-            pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
-            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
-          }
         }
+
+        if (oscSync > 1) {
+          const uint32_t sm_mask = (1u << sm1N) | (1u << sm2N);
+          uint32_t phaseDelayCalcClkDiv = pioPulseLength + phaseDelay - correctionPioPulseLength;
+
+          pio_set_sm_mask_enabled(pioN_A, sm_mask, false);
+          
+          pio_sm_clear_fifos(pioN_B, sm2N);
+          pio_sm_clear_fifos(pioN_A, sm1N);
+
+          pio_sm_put(pioN_B, sm2N, phaseDelayCalcClkDiv);
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+
+          pio_sm_put(pioN_A, sm1N, clk_div1);
+          pio_sm_put(pioN_B, sm2N, clk_div2);
+          pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, true));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, true));
+
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(18 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(18 + offset[pioNumberB]));
+
+          
+          pio_set_sm_mask_enabled(pioN_A, sm_mask, true);
+        }
+        // if (oscSync > 0) {
+        //   pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+        //   pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+
+        //   if (oscSync > 1) {
+        //     pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+        //     pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+        //     pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+        //   }
+        // }
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
       }
@@ -779,13 +827,13 @@ inline void setVoiceMode() {
  * numerically stable fixed-point quadratic method.
  */
 static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
-  static uint8_t lastWindow[NUM_OSCILLATORS] = {0};
+  static uint8_t lastWindow[NUM_OSCILLATORS] = { 0 };
 
   // --- 1. Load pointers to this oscillator's table rows (cache friendly) ---
   const int32_t* freqRow = ampCompFrequencyArray[voiceN];
-  const int32_t* ampRow  = ampCompArray[voiceN];
+  const int32_t* ampRow = ampCompArray[voiceN];
   const int32_t* xBaseRow = xBaseWIN[voiceN];
-  const int32_t* spanRow  = dxWIN[voiceN];
+  const int32_t* spanRow = dxWIN[voiceN];
   const uint32_t* invRow_q28 = invDxWIN_q28[voiceN];
   const int32_t* aRow = aQWIN_fast[voiceN];
   const int32_t* bRow = bQWIN_fast[voiceN];
@@ -827,7 +875,7 @@ static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
   // T_FRAC is 14, matching the legacy high-precision path.
   const uint32_t inv_q28 = invRow_q28[window];
   uint32_t t_q = (uint32_t)(((uint64_t)dx * inv_q28) >> (28 - T_FRAC));
-  
+
   // y(t) = a*t^2 + b*t + c
   // All intermediate math uses 64-bit to prevent overflow.
   int64_t a = aRow[window];
@@ -838,7 +886,7 @@ static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
   uint32_t t2 = (uint32_t)(((uint32_t)t_q * t_q) >> T_FRAC);
   int32_t term_a = (int32_t)((a * t2) >> T_FRAC);
   int32_t term_b = (int32_t)((b * t_q) >> T_FRAC);
-  
+
   // Sum the terms (all are Q(T_FRAC)) and then scale back to Q0 with rounding.
   int32_t y_q = term_a + term_b + (c << T_FRAC);
   int32_t y = (y_q + (1 << (T_FRAC - 1))) >> T_FRAC;
@@ -883,14 +931,14 @@ inline uint16_t get_chan_level_optimized(int32_t x, uint8_t voiceN) {
   const int32_t cQ = cQWIN[voiceN][i];
 
   const int32_t quad_term = (int32_t)((aQ * (int64_t)t2) >> T_FRAC);
-  const int32_t lin_term  = (int32_t)((bQ * (int64_t)t_q) >> T_FRAC);
-  const int32_t yQ   = quad_term + lin_term + (cQ << T_FRAC);
+  const int32_t lin_term = (int32_t)((bQ * (int64_t)t_q) >> T_FRAC);
+  const int32_t yQ = quad_term + lin_term + (cQ << T_FRAC);
   int32_t y = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);
 
   // --- 4. Clamp and Return Final Value ---
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = (int32_t)DIV_COUNTER;
-  
+
   return (uint16_t)y;
 }
 
@@ -908,7 +956,7 @@ inline uint16_t get_chan_level_lookup_float(int32_t x, uint8_t voiceN) {
   if (k < 0) k = 0;
   if (k > ampCompTableSize - 2) k = ampCompTableSize - 2;
   float xf = (float)x / (float)(1u << FREQ_FRAC_BITS);
-    float yf = (aCoeff[voiceN][k] * xf + bCoeff[voiceN][k]) * xf + cCoeff[voiceN][k];
+  float yf = (aCoeff[voiceN][k] * xf + bCoeff[voiceN][k]) * xf + cCoeff[voiceN][k];
   int32_t y = (int32_t)lrintf(yf);
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
@@ -932,7 +980,7 @@ inline uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
       return chanLevel;
     } else {
       chanLevel = map(PWval, PW_LOOKUP[0], PW_LOOKUP[1], PW_LOW_LIMIT[voiceN], PW_CENTER[voiceN]);
-      return chanLevel;   
+      return chanLevel;
     }
 
     return chanLevel;
@@ -1147,9 +1195,9 @@ void voice_task_debug() {
 
 // Cached variant: pass DCO index to reuse last segment and avoid binary search
 inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoIndex) {
-// #ifdef RUNNING_AVERAGE
-//   unsigned long t_interp = micros();
-// #endif
+  // #ifdef RUNNING_AVERAGE
+  //   unsigned long t_interp = micros();
+  // #endif
   int32_t xInt = xQ16 >> 16;
   // Clamp to bounds using integer part
   if (xInt <= xMultiplierTable[0]) {
@@ -1160,8 +1208,7 @@ inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoInde
   }
   int low = interpSegCache[dcoIndex];
   // Validate cache; adjust locally if possible
-  if (low < 0 || low > multiplierTableSize - 2 ||
-      !(xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+  if (low < 0 || low > multiplierTableSize - 2 || !(xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
     // Try step toward correct segment
     if (low >= 0 && low < multiplierTableSize - 1) {
       if (xInt >= xMultiplierTable[low + 1]) {
@@ -1171,8 +1218,7 @@ inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoInde
       }
     }
     // If still wrong, do binary search
-    if (!(low >= 0 && low < multiplierTableSize - 1 &&
-          xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+    if (!(low >= 0 && low < multiplierTableSize - 1 && xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
       int l = 0, h = multiplierTableSize - 1;
       while (l <= h) {
         int m = (l + h) >> 1;
@@ -1209,9 +1255,9 @@ inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoInde
   int32_t deltaQ16 = xQ16 - (x0 << 16);
   int32_t y = y0 + (int32_t)((((int64_t)deltaQ16 * (int64_t)slope) + (1LL << 35)) >> 36);
 #endif
-// #ifdef RUNNING_AVERAGE
-//   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-// #endif
+  // #ifdef RUNNING_AVERAGE
+  //   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
+  // #endif
   return y;
 }
 // Cached Q16 ratio interpolator: returns multiplier ratio in Q16 without divide
@@ -1232,8 +1278,7 @@ inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
   }
   int low = interpSegCache[dcoIndex];
   // Validate cache; adjust locally if possible
-  if (low < 0 || low > multiplierTableSize - 2 ||
-      !(xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+  if (low < 0 || low > multiplierTableSize - 2 || !(xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
     // Try step toward correct segment
     if (low >= 0 && low < multiplierTableSize - 1) {
       if (xInt >= xMultiplierTable[low + 1]) {
@@ -1243,8 +1288,7 @@ inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
       }
     }
     // If still wrong, do binary search
-    if (!(low >= 0 && low < multiplierTableSize - 1 &&
-          xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
+    if (!(low >= 0 && low < multiplierTableSize - 1 && xMultiplierTable[low] <= xInt && xInt < xMultiplierTable[low + 1])) {
       int l = 0, h = multiplierTableSize - 1;
       while (l <= h) {
         int m = (l + h) >> 1;
@@ -1269,7 +1313,7 @@ inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
   int32_t deltaQ16 = xQ16 - (x0 << 16);
   int32_t yTab = y0 + (int32_t)((((int64_t)deltaQ16 * (int64_t)slope) + (1LL << 35)) >> 36);
   // Convert y (table units) to ratio Q16 with rounding using reciprocal-multiply
-  uint64_t num = ((uint64_t)(uint32_t)yTab << 16) + 5000u; // scale/2
+  uint64_t num = ((uint64_t)(uint32_t)yTab << 16) + 5000u;  // scale/2
   int32_t ratioQ16 = (int32_t)((num * 0xD1B71759ULL) >> 45);
 #ifdef RUNNING_AVERAGE
   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
@@ -1299,7 +1343,7 @@ void initMultiplierTables() {
 
     xMultiplierTable[i] = (int32_t)(x * (double)multiplierTableScale);
     yMultiplierTable[i] = (int32_t)(y_value * (double)multiplierTableScale);
-  x0Q16_tbl[i] = xMultiplierTable[i] << 16;
+    x0Q16_tbl[i] = xMultiplierTable[i] << 16;
   }
   // Precompute slopes for fast integer interpolation
   for (int i = 0; i < (multiplierTableSize - 1); ++i) {
@@ -1307,16 +1351,16 @@ void initMultiplierTables() {
     if (dx == 0) dx = 1;
     // Precompute slope in Q20 for fast multiply-only interpolation
     int32_t dy = yMultiplierTable[i + 1] - yMultiplierTable[i];
-    int64_t numSlope = ((int64_t)dy << 20) + (dx > 0 ? dx/2 : -dx/2);
+    int64_t numSlope = ((int64_t)dy << 20) + (dx > 0 ? dx / 2 : -dx / 2);
     slopeQ20[i] = (int32_t)(numSlope / (int64_t)dx);
 #ifdef PITCH_INTERP_USE_Q8
     // Optional lower-precision slope for 32-bit fast path
-    int64_t numSlope8 = ((int64_t)dy << 8) + (dx > 0 ? dx/2 : -dx/2);
+    int64_t numSlope8 = ((int64_t)dy << 8) + (dx > 0 ? dx / 2 : -dx / 2);
     slopeQ8[i] = (int32_t)(numSlope8 / (int64_t)dx);
 #endif
 #ifdef PITCH_INTERP_USE_Q12
     // Medium-precision slope for balanced speed/accuracy
-    int64_t numSlope12 = ((int64_t)dy << 12) + (dx > 0 ? dx/2 : -dx/2);
+    int64_t numSlope12 = ((int64_t)dy << 12) + (dx > 0 ? dx / 2 : -dx / 2);
     slopeQ12[i] = (int32_t)(numSlope12 / (int64_t)dx);
 #endif
   }
@@ -1327,45 +1371,59 @@ void initMultiplierTables() {
 #ifdef RUNNING_AVERAGE
 void print_voice_task_timings() {
   Serial.println("\n=== VOICE_TASK TIMING STATISTICS (microseconds) ===");
-  Serial.print("Pitch Bend Calc:      "); 
-  if (ra_pitchbend.getCount() > 0) Serial.println(ra_pitchbend.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("OSC2 Detune:          "); 
-  if (ra_osc2_detune.getCount() > 0) Serial.println(ra_osc2_detune.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Portamento:           "); 
-  if (ra_portamento.getCount() > 0) Serial.println(ra_portamento.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("ADSR Modifier:        "); 
-  if (ra_adsr_modifier.getCount() > 0) Serial.println(ra_adsr_modifier.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Unison Modifier:      "); 
-  if (ra_unison_modifier.getCount() > 0) Serial.println(ra_unison_modifier.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Drift Modifier:       "); 
-  if (ra_drift_multiplier.getCount() > 0) Serial.println(ra_drift_multiplier.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Modifiers Combination:"); 
-  if (ra_modifiers_combination.getCount() > 0) Serial.println(ra_modifiers_combination.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Freq Scaling:         "); 
-  if (ra_freq_scaling.getCount() > 0) Serial.println(ra_freq_scaling.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Interpolate Pitch:    "); 
-  if (ra_interpolate_pitch.getCount() > 0) Serial.println(ra_interpolate_pitch.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Get Chan Level:       "); 
-  if (ra_get_chan_level.getCount() > 0) Serial.println(ra_get_chan_level.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Clock Div Calc:       "); 
-  if (ra_clk_div_calc.getCount() > 0) Serial.println(ra_clk_div_calc.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("PWM Calculations:     "); 
-  if (ra_pwm_calculations.getCount() > 0) Serial.println(ra_pwm_calculations.getFastAverage(), 2); else Serial.println("N/A");
-  
-  Serial.print("Voice Task Total:     "); 
-  Serial.print(ra_voice_task_total.getFastAverage(), 2); Serial.print(" avg, max "); Serial.println(voice_task_max_time);
-  
+  Serial.print("Pitch Bend Calc:      ");
+  if (ra_pitchbend.getCount() > 0) Serial.println(ra_pitchbend.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("OSC2 Detune:          ");
+  if (ra_osc2_detune.getCount() > 0) Serial.println(ra_osc2_detune.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Portamento:           ");
+  if (ra_portamento.getCount() > 0) Serial.println(ra_portamento.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("ADSR Modifier:        ");
+  if (ra_adsr_modifier.getCount() > 0) Serial.println(ra_adsr_modifier.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Unison Modifier:      ");
+  if (ra_unison_modifier.getCount() > 0) Serial.println(ra_unison_modifier.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Drift Modifier:       ");
+  if (ra_drift_multiplier.getCount() > 0) Serial.println(ra_drift_multiplier.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Modifiers Combination:");
+  if (ra_modifiers_combination.getCount() > 0) Serial.println(ra_modifiers_combination.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Freq Scaling:         ");
+  if (ra_freq_scaling.getCount() > 0) Serial.println(ra_freq_scaling.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Interpolate Pitch:    ");
+  if (ra_interpolate_pitch.getCount() > 0) Serial.println(ra_interpolate_pitch.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Get Chan Level:       ");
+  if (ra_get_chan_level.getCount() > 0) Serial.println(ra_get_chan_level.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Clock Div Calc:       ");
+  if (ra_clk_div_calc.getCount() > 0) Serial.println(ra_clk_div_calc.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("PWM Calculations:     ");
+  if (ra_pwm_calculations.getCount() > 0) Serial.println(ra_pwm_calculations.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Voice Task Total:     ");
+  Serial.print(ra_voice_task_total.getFastAverage(), 2);
+  Serial.print(" avg, max ");
+  Serial.println(voice_task_max_time);
+
   Serial.println("===================================================\n");
 }
 #endif
@@ -1426,7 +1484,7 @@ void print_voice_task_timings() {
 // }
 
 inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
-  static int lastSegIdx[NUM_OSCILLATORS] = {0};
+  static int lastSegIdx[NUM_OSCILLATORS] = { 0 };
   // If frequency is at/above max comp band, drive full-scale level
   if (x >= AMP_COMP_MAX_HZ_Q) {
     return (uint16_t)DIV_COUNTER;
@@ -1481,11 +1539,11 @@ inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
   int64_t bQ = (int64_t)bQWIN[voiceN][i];
   int32_t cQ = (int32_t)cQWIN[voiceN][i];
   // Fast Q(T_FRAC) polynomial: compute t2 once, do one rounding at the end
-  uint32_t t2   = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);              // Q(T_FRAC)
-  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                           // Q(T_FRAC)
-  int32_t linQ  = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                           // Q(T_FRAC)
-  int32_t yQ    = quadQ + linQ + (cQ << T_FRAC);                                       // Q(T_FRAC)
-  int32_t y     = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);        // Q0
+  uint32_t t2 = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);       // Q(T_FRAC)
+  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                 // Q(T_FRAC)
+  int32_t linQ = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                 // Q(T_FRAC)
+  int32_t yQ = quadQ + linQ + (cQ << T_FRAC);                                // Q(T_FRAC)
+  int32_t y = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);  // Q0
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
   return (uint16_t)y;
@@ -1499,9 +1557,9 @@ static inline uint32_t calculate_clk_div_float(int64_t freq_q24, bool use_eight_
 
   long double freq_ld = (long double)freq_q24 / (long double)(1 << 24);
   long double clock_ld = use_eight_sys_clock ? (long double)eightSysClock_Hz_u : (long double)sysClock_Hz;
-  
+
   long double raw_div_ld = clock_ld / freq_ld;
-  
+
   uint32_t pulse_len = use_eight_sys_clock ? eightPioPulseLength : pioPulseLength;
 
   if (raw_div_ld < pulse_len) {
@@ -1519,118 +1577,118 @@ inline void voice_task_gold_reference() {
       note_on_flag[i] = 0;
     }
 
-      uint8_t DCO_A = i * 2;
-      uint8_t DCO_B = (i * 2) + 1;
+    uint8_t DCO_A = i * 2;
+    uint8_t DCO_B = (i * 2) + 1;
 
-      // --- High Precision Frequency Calculation (compatible with voice_task_simple) ---
-      uint8_t note1 = VOICE_NOTES[i] - 36 + OSC1_interval;
-      if (note1 > highestNote) {
-        note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
-      }
-      long double freq_ld = sNotePitches[note1];
-      
-      // Base frequency for OSC2 is the original note, which unison will modify.
-      long double freq2_ld = sNotePitches[VOICE_NOTES[i] - 36];
+    // --- High Precision Frequency Calculation (compatible with voice_task_simple) ---
+    uint8_t note1 = VOICE_NOTES[i] - 36 + OSC1_interval;
+    if (note1 > highestNote) {
+      note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
+    }
+    long double freq_ld = sNotePitches[note1];
 
-      // High-precision unison detune calculation from first principles.
-      if (unisonDetune != 0) {
-          // Unison detune steps are 0.25 semitones = 25 cents.
-          long double cents_offset = (long double)unisonDetune * 0.12L;
-          long double unison_ratio_ld = powl(2.0L, cents_offset / 1200.0L);
-          freq2_ld *= unison_ratio_ld;
-          freq_ld *= unison_ratio_ld;
-      }
+    // Base frequency for OSC2 is the original note, which unison will modify.
+    long double freq2_ld = sNotePitches[VOICE_NOTES[i] - 36];
 
-      uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
-      uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
-      PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
-      PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
-      uint8_t sm1N = VOICE_TO_SM[DCO_A];
-      uint8_t sm2N = VOICE_TO_SM[DCO_B];
+    // High-precision unison detune calculation from first principles.
+    if (unisonDetune != 0) {
+      // Unison detune steps are 0.25 semitones = 25 cents.
+      long double cents_offset = (long double)unisonDetune * 0.12L;
+      long double unison_ratio_ld = powl(2.0L, cents_offset / 1200.0L);
+      freq2_ld *= unison_ratio_ld;
+      freq_ld *= unison_ratio_ld;
+    }
 
-      // --- High Precision Clock Divider Calculation (Inlined) ---
-      uint32_t clk_div1;
-      long double raw_div1_ld = (long double)eightSysClock_Hz_u / freq_ld;
-      clk_div1 = (raw_div1_ld > eightPioPulseLength) ? (uint32_t)(raw_div1_ld - eightPioPulseLength) : 0;
+    uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
+    uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
+    PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
+    PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
+    uint8_t sm1N = VOICE_TO_SM[DCO_A];
+    uint8_t sm2N = VOICE_TO_SM[DCO_B];
 
-      uint32_t clk_div2;
+    // --- High Precision Clock Divider Calculation (Inlined) ---
+    uint32_t clk_div1;
+    long double raw_div1_ld = (long double)eightSysClock_Hz_u / freq_ld;
+    clk_div1 = (raw_div1_ld > eightPioPulseLength) ? (uint32_t)(raw_div1_ld - eightPioPulseLength) : 0;
 
-      if (oscSync > 1) {
-          // This path uses sysClock_Hz
-          long double raw_div2_ld = (long double)sysClock_Hz / freq2_ld;
-          if (raw_div2_ld > pioPulseLength) {
-            long double phaseDelay_ld = (raw_div2_ld - (long double)pioPulseLength) / 180.0L * (long double)phaseAlignOSC2;
-            long double clk_div2_ld = (raw_div2_ld - (long double)pioPulseLength - phaseDelay_ld) / 8.0L;
-            clk_div2 = (uint32_t)clk_div2_ld;
-          } else {
-            clk_div2 = 0;
-          }
+    uint32_t clk_div2;
+
+    if (oscSync > 1) {
+      // This path uses sysClock_Hz
+      long double raw_div2_ld = (long double)sysClock_Hz / freq2_ld;
+      if (raw_div2_ld > pioPulseLength) {
+        long double phaseDelay_ld = (raw_div2_ld - (long double)pioPulseLength) / 180.0L * (long double)phaseAlignOSC2;
+        long double clk_div2_ld = (raw_div2_ld - (long double)pioPulseLength - phaseDelay_ld) / 8.0L;
+        clk_div2 = (uint32_t)clk_div2_ld;
       } else {
-          // This path uses eightSysClock_Hz_u
-          long double raw_div2_ld = (long double)eightSysClock_Hz_u / freq2_ld;
-          clk_div2 = (raw_div2_ld > eightPioPulseLength) ? (uint32_t)(raw_div2_ld - eightPioPulseLength) : 0;
+        clk_div2 = 0;
       }
+    } else {
+      // This path uses eightSysClock_Hz_u
+      long double raw_div2_ld = (long double)eightSysClock_Hz_u / freq2_ld;
+      clk_div2 = (raw_div2_ld > eightPioPulseLength) ? (uint32_t)(raw_div2_ld - eightPioPulseLength) : 0;
+    }
 
-      // voice_task_4_time = micros() - voice_task_start_time;
+    // voice_task_4_time = micros() - voice_task_start_time;
 
-      uint16_t chanLevel, chanLevel2;
+    uint16_t chanLevel, chanLevel2;
 
-      // Convert back to Q8 for amp comp lookup
-      int32_t fxA = (int32_t)(freq_ld > 0.0L ? (freq_ld * (long double)(1u << FREQ_FRAC_BITS) + 0.5L) : 0.0L);
-      int32_t fxB = (int32_t)(freq2_ld > 0.0L ? (freq2_ld * (long double)(1u << FREQ_FRAC_BITS) + 0.5L) : 0.0L);
+    // Convert back to Q8 for amp comp lookup
+    int32_t fxA = (int32_t)(freq_ld > 0.0L ? (freq_ld * (long double)(1u << FREQ_FRAC_BITS) + 0.5L) : 0.0L);
+    int32_t fxB = (int32_t)(freq2_ld > 0.0L ? (freq2_ld * (long double)(1u << FREQ_FRAC_BITS) + 0.5L) : 0.0L);
 
-      switch (syncMode) {
-        case 0:
-          chanLevel = get_chan_level_lookup_fast(fxA, DCO_A);
-          chanLevel2 = get_chan_level_lookup_fast(fxB, DCO_B);
-          break;
-        case 1:
-          chanLevel = get_chan_level_lookup_fast((fxA > fxB ? fxA : fxB), DCO_A);
-          chanLevel2 = get_chan_level_lookup_fast(fxB, DCO_B);
-          break;
-        case 2:
-          chanLevel = get_chan_level_lookup_fast(fxA, DCO_A);
-          chanLevel2 = get_chan_level_lookup_fast((fxA > fxB ? fxA : fxB), DCO_B);
-          break;
-      }
+    switch (syncMode) {
+      case 0:
+        chanLevel = get_chan_level_lookup_fast(fxA, DCO_A);
+        chanLevel2 = get_chan_level_lookup_fast(fxB, DCO_B);
+        break;
+      case 1:
+        chanLevel = get_chan_level_lookup_fast((fxA > fxB ? fxA : fxB), DCO_A);
+        chanLevel2 = get_chan_level_lookup_fast(fxB, DCO_B);
+        break;
+      case 2:
+        chanLevel = get_chan_level_lookup_fast(fxA, DCO_A);
+        chanLevel2 = get_chan_level_lookup_fast((fxA > fxB ? fxA : fxB), DCO_B);
+        break;
+    }
 
-      // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
+    // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
-      pio_sm_put(pioN_A, sm1N, clk_div1);
-      pio_sm_put(pioN_B, sm2N, clk_div2);
-      pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
-      pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+    pio_sm_put(pioN_A, sm1N, clk_div1);
+    pio_sm_put(pioN_B, sm2N, clk_div2);
+    pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+    pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
 
-      // Serial.println("VOICE TASK 5a");
+    // Serial.println("VOICE TASK 5a");
 
-      if (note_on_flag_flag[i]) {
-        if (oscSync > 0) {
-          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
-          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+    if (note_on_flag_flag[i]) {
+      if (oscSync > 0) {
+        pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+        pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
 
-          if (oscSync > 1) {
-            pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
-            pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
-            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
-            pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_x, 31));
-          }
+        if (oscSync > 1) {
+          pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_x, 31));
         }
-
-        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
-        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
       }
 
-      if (timer99microsFlag) {
-        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
-        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
-      }
+      pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+      pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+    }
 
-      if (sqr1Status) {
-        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW_CENTER[i]);
-      } else {
-        pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
-      }
-    
+    if (timer99microsFlag) {
+      pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+      pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+    }
+
+    if (sqr1Status) {
+      pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW_CENTER[i]);
+    } else {
+      pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
+    }
+
     note_on_flag_flag[i] = false;
   }
 }
