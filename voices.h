@@ -2,10 +2,6 @@
 #ifndef __VOICES_H__
 #define __VOICES_H__
 
-#ifdef RUNNING_AVERAGE
-#include "RunningAverage.h"
-#endif
-
 void init_voices();
 void print_voice_task_timings();
 

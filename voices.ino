@@ -1,5 +1,43 @@
 #include "include_all.h"
 
+static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
+  int window = 0;
+  for (int k = 0; k < ampCompTableSize - 2; ++k) {
+    if (ampCompFrequencyArray[voiceN][k] <= x &&
+        x <= ampCompFrequencyArray[voiceN][k + 2]) {
+      window = k;
+      break;
+    }
+  }
+  if (window < 0) window = 0;
+  if (window > ampCompTableSize - 3) window = ampCompTableSize - 3;
+
+  int32_t x0 = ampCompFrequencyArray[voiceN][window];
+  int32_t x1 = ampCompFrequencyArray[voiceN][window + 1];
+  int32_t x2 = ampCompFrequencyArray[voiceN][window + 2];
+  uint16_t y0 = ampCompArray[voiceN][window];
+  uint16_t y1 = ampCompArray[voiceN][window + 1];
+  uint16_t y2 = ampCompArray[voiceN][window + 2];
+  bool useDouble = useDoubleWindow[voiceN][window];
+  double aD = aCoeffD[voiceN][window];
+  double bD = bCoeffD[voiceN][window];
+  double cD = cCoeffD[voiceN][window];
+
+  Serial.print("[AMPWINDBG] v="); Serial.print(voiceN);
+  Serial.print(" win="); Serial.print(window);
+  Serial.print(" useDouble="); Serial.print(useDouble ? "1" : "0");
+  Serial.print(" x0="); Serial.print(x0);
+  Serial.print(" x1="); Serial.print(x1);
+  Serial.print(" x2="); Serial.print(x2);
+  Serial.print(" y0="); Serial.print(y0);
+  Serial.print(" y1="); Serial.print(y1);
+  Serial.print(" y2="); Serial.print(y2);
+  Serial.print(" aD="); Serial.print(aD, 6);
+  Serial.print(" bD="); Serial.print(bD, 6);
+  Serial.print(" cD="); Serial.print(cD, 6);
+  Serial.println();
+}
+
 // (amp-comp debug removed after validation)
 
 // Simple optimization: cache last raw divider and reuse while it remains valid.
@@ -397,16 +435,16 @@ inline void voice_task() {
                                            : - ((-freq_q16_B) >> Q16_TO_FREQ_SHIFT);
       switch (syncMode) {
         case 0:
-          chanLevel = get_chan_level(freqFx_A, DCO_A);
-          chanLevel2 = get_chan_level(freqFx_B, DCO_B);         
+          chanLevel = get_chan_level_lookup_fast(freqFx_A, DCO_A);
+          chanLevel2 = get_chan_level_lookup_fast(freqFx_B, DCO_B);
           break;
         case 1:
-          chanLevel = get_chan_level((freqFx_A > freqFx_B ? freqFx_A : freqFx_B), DCO_A);
-          chanLevel2 = get_chan_level(freqFx_B, DCO_B);
+          chanLevel = get_chan_level_lookup_fast((freqFx_A > freqFx_B ? freqFx_A : freqFx_B), DCO_A);
+          chanLevel2 = get_chan_level_lookup_fast(freqFx_B, DCO_B);
           break;
         case 2:
-          chanLevel = get_chan_level(freqFx_A, DCO_A);
-          chanLevel2 = get_chan_level((freqFx_A > freqFx_B ? freqFx_A : freqFx_B), DCO_B);
+          chanLevel = get_chan_level_lookup_fast(freqFx_A, DCO_A);
+          chanLevel2 = get_chan_level_lookup_fast((freqFx_A > freqFx_B ? freqFx_A : freqFx_B), DCO_B);
           break;
       }
 #ifdef RUNNING_AVERAGE
@@ -414,24 +452,26 @@ inline void voice_task() {
 #endif
 
           // Periodic accuracy check against float reference (every ~100 ms)
-          {
-            // Only print for voice 0 (DCO_A belongs to voice i)
+          
             if (i == 0) {
               static unsigned long lastAmpDiffPrint = 0;
               unsigned long now = micros();
               if ((now - lastAmpDiffPrint) >= 100000) {
-                uint16_t y_fl_A = get_chan_level_lookup_float(freqFx_A, DCO_A);
-                // Convert Q(FREQ_FRAC_BITS) to Hz for readability
+                uint16_t y_fl_A = get_chan_level_lookup(freqFx_A, DCO_A);
                 float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
+                int32_t diff = (int32_t)y_fl_A - (uint16_t)chanLevel;
                 Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
                 Serial.print(" fHz="); Serial.print(fHzA, 3);
-                Serial.print(" fl="); Serial.print((int32_t)y_fl_A);
-                Serial.print(" fx="); Serial.print((int32_t)chanLevel);
-                Serial.print(" diff="); Serial.println((int32_t)y_fl_A - (int32_t)chanLevel);
+                Serial.print(" F_Referencia="); Serial.print(y_fl_A);
+                Serial.print(" F_Actual="); Serial.print(chanLevel);
+                Serial.print(" diff="); Serial.println(diff);
+                if (diff > 50 || diff < -50) {
+                  amp_comp_debug_window(freqFx_A, DCO_A);
+                }
                 lastAmpDiffPrint = now;
               }
             }
-          }
+          
 
       // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
 
@@ -594,16 +634,16 @@ inline void voice_task_simple() {
 
       switch (syncMode) {
         case 0:
-          chanLevel = get_chan_level(fxA, DCO_A);
-          chanLevel2 = get_chan_level(fxB, DCO_B);
+          chanLevel = get_chan_level_optimized(fxA, DCO_A);
+          chanLevel2 = get_chan_level_optimized(fxB, DCO_B);
           break;
         case 1:
-          chanLevel = get_chan_level((fxA > fxB ? fxA : fxB), DCO_A);
-          chanLevel2 = get_chan_level(fxB, DCO_B);
+          chanLevel = get_chan_level_optimized((fxA > fxB ? fxA : fxB), DCO_A);
+          chanLevel2 = get_chan_level_optimized(fxB, DCO_B);
           break;
         case 2:
-          chanLevel = get_chan_level(fxA, DCO_A);
-          chanLevel2 = get_chan_level((fxA > fxB ? fxA : fxB), DCO_B);
+          chanLevel = get_chan_level_optimized(fxA, DCO_A);
+          chanLevel2 = get_chan_level_optimized((fxA > fxB ? fxA : fxB), DCO_B);
           break;
       }
 
@@ -729,81 +769,138 @@ inline void setVoiceMode() {
   }
 }
 
-// Uses non linear interpolation and coefficients (fast fixed-point; minimal branching)
-inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
-  static int lastSegIdx[NUM_OSCILLATORS] = {0};
-  // If frequency is at/above max comp band, drive full-scale level
-  if (x >= AMP_COMP_MAX_HZ_Q) {
+/**
+ * @brief Fast amplitude compensation lookup tuned for the RP2040.
+ *
+ * This function is optimized for the simple, in-order pipeline of the ARM Cortex-M0+ core.
+ * It replaces complex, unpredictable branching with a simple, predictable linear scan
+ * to find the correct interpolation window. For small tables, this approach is often
+ * faster as it avoids processor pipeline stalls. The core calculation uses the proven,
+ * numerically stable fixed-point quadratic method.
+ */
+static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
+  static uint8_t lastWindow[NUM_OSCILLATORS] = {0};
+
+  const int32_t* freqRow = ampCompFrequencyArray[voiceN];
+  const int32_t* ampRow  = ampCompArray[voiceN];
+  const int32_t* xBaseRow = xBaseWIN[voiceN];
+  const int32_t* spanRow  = dxWIN[voiceN];
+  const uint16_t* invRow  = invDxWIN_qFast[voiceN];
+  const int32_t* aRow = aQWIN_fast[voiceN];
+  const int32_t* bRow = bQWIN_fast[voiceN];
+  const uint16_t* cRow = cQWIN[voiceN];
+  const bool* plateauRow = plateauWindow[voiceN];
+  const uint8_t* tShiftRow = tMulShiftFast[voiceN];
+
+  if (x <= freqRow[0]) return (uint16_t)ampRow[0];
+  const int lastIdx = ampCompTableSize - 1;
+  if (x >= freqRow[lastIdx]) return (uint16_t)ampRow[lastIdx];
+
+  int window = lastWindow[voiceN];
+  const int maxWindow = ampCompTableSize - 3;
+  if (window > maxWindow) window = maxWindow;
+
+  while (window > 0 && x < freqRow[window]) {
+    --window;
+  }
+  while (window < maxWindow && x > freqRow[window + 2]) {
+    ++window;
+  }
+  lastWindow[voiceN] = (uint8_t)window;
+
+  if (plateauRow[window] && x >= freqRow[window + 1]) {
     return (uint16_t)DIV_COUNTER;
   }
-  // Clamp bounds
-  if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
-  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) return ampCompArray[voiceN][ampCompTableSize - 1];
 
-  // Use cached window first
-  int i = lastSegIdx[voiceN];
-  if (i < 0) i = 0;
-  if (i > ampCompTableSize - 3) i = ampCompTableSize - 3;
-  if (ampCompFrequencyArray[voiceN][i] <= x && x <= ampCompFrequencyArray[voiceN][i + 2]) {
-    // ok
-  } else if ((i + 1) <= (ampCompTableSize - 3) && ampCompFrequencyArray[voiceN][i + 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 3]) {
-    i = i + 1;
-  } else if ((i - 1) >= 0 && ampCompFrequencyArray[voiceN][i - 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 1]) {
-    i = i - 1;
+  int32_t dx = x - xBaseRow[window];
+  if (dx <= 0) {
+    dx = 0;
   } else {
-    // Short linear scan (rare)
-    for (int k = 0; k < ampCompTableSize - 2; k++) {
-      if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
-        i = k;
-        break;
-      }
-    }
+    const int32_t span = spanRow[window];
+    if (dx >= span) dx = span;
   }
-  lastSegIdx[voiceN] = i;
 
-  // Fixed-point eval in window i..i+2
-  int32_t x0 = xBaseWIN[voiceN][i];
-  // If we're in the top-most window AND both right endpoints are already at max,
-  // then once we pass the mid point, clamp to DIV_COUNTER.
-  if (i >= (ampCompTableSize - 3) &&
-      ampCompArray[voiceN][i + 1] >= (int32_t)DIV_COUNTER &&
-      ampCompArray[voiceN][i + 2] >= (int32_t)DIV_COUNTER &&
-      x >= ampCompFrequencyArray[voiceN][i + 1]) {
-    return (uint16_t)DIV_COUNTER;
+  const uint32_t roundingRecip = (uint32_t)1 << (AMP_COMP_FAST_RECIP_EXTRA - 1);
+  uint8_t s = tShiftRow[window];
+  uint32_t dxs = (uint32_t)dx >> s;
+  uint32_t t_q;
+  if (AMP_COMP_FAST_RECIP_EXTRA > s) {
+    t_q = (dxs * (uint32_t)invRow[window] + roundingRecip) >> (AMP_COMP_FAST_RECIP_EXTRA - s);
+  } else {
+    t_q = (dxs * (uint32_t)invRow[window]) << (s - AMP_COMP_FAST_RECIP_EXTRA);
   }
-  // Symmetric case: if top-most window endpoints are at/below 0, clamp to 0 beyond midpoint
-  if (i >= (ampCompTableSize - 3) &&
-      ampCompArray[voiceN][i + 1] <= 0 &&
-      ampCompArray[voiceN][i + 2] <= 0 &&
-      x >= ampCompFrequencyArray[voiceN][i + 1]) {
-    return (uint16_t)0;
+  const uint32_t tMax = (uint32_t)(1u << AMP_COMP_FAST_T_FRAC);
+  if ((uint32_t)dx == (uint32_t)spanRow[window]) {
+    t_q = tMax; // ensure exact endpoint hit
+  } else if (t_q > tMax) {
+    t_q = tMax;
   }
-  int32_t dx02 = dxWIN[voiceN][i];
-  int32_t dx = x - x0;
-  if (dx < 0) dx = 0;
-  if (dx > dx02) dx = dx02;
-  // Q28 reciprocal path: t_q = round((dx / dx02) * 2^T_FRAC)
-  // invDxWIN_q28 = round(2^28 / dx02) precomputed per window
-  const uint32_t invDx_q28 = invDxWIN_q28[voiceN][i];
-  uint32_t t_q = (uint32_t)(((uint64_t)(uint32_t)dx * (uint64_t)invDx_q28) >> (28 - T_FRAC));
-  if (t_q > (uint32_t)(1u << T_FRAC)) t_q = (1u << T_FRAC);
 
-  // 32-bit polynomial using aQ/bQ (Q(T_FRAC)) and t in Q(T_FRAC):
-  int64_t aQ = (int64_t)aQWIN[voiceN][i];
-  int64_t bQ = (int64_t)bQWIN[voiceN][i];
-  int32_t cQ = (int32_t)cQWIN[voiceN][i];
-  // Fast Q(T_FRAC) polynomial: compute t2 once, do one rounding at the end
-  uint32_t t2   = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);              // Q(T_FRAC)
-  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                           // Q(T_FRAC)
-  int32_t linQ  = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                           // Q(T_FRAC)
-  int32_t yQ    = quadQ + linQ + (cQ << T_FRAC);                                       // Q(T_FRAC)
-  int32_t y     = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);        // Q0
+  const uint32_t roundingT2 = (uint32_t)1 << (AMP_COMP_FAST_T_FRAC - 1);
+  uint32_t t2 = ((uint32_t)t_q * (uint32_t)t_q + roundingT2) >> AMP_COMP_FAST_T_FRAC;
+
+  const int shift = AMP_COMP_FAST_COEFF_FRAC + AMP_COMP_FAST_T_FRAC;
+  const int32_t roundingCoeff = (int32_t)1 << (shift - 1);
+
+  int32_t quad = aRow[window] * (int32_t)t2;
+  if (quad >= 0) quad = (quad + roundingCoeff) >> shift;
+  else quad = (quad - roundingCoeff) >> shift;
+
+  int32_t lin = bRow[window] * (int32_t)t_q;
+  if (lin >= 0) lin = (lin + roundingCoeff) >> shift;
+  else lin = (lin - roundingCoeff) >> shift;
+
+  int32_t y = quad + lin + (int32_t)cRow[window];
   if (y < 0) y = 0;
-  if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
+  if (y > (int32_t)DIV_COUNTER) y = (int32_t)DIV_COUNTER;
+
   return (uint16_t)y;
 }
 
- 
+inline uint16_t get_chan_level_optimized(int32_t x, uint8_t voiceN) {
+  // --- 1. Handle Boundary Conditions ---
+  if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
+  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) return ampCompArray[voiceN][ampCompTableSize - 1];
+
+  // --- 2. Find the Correct Interpolation Window via a Simple Linear Scan ---
+  // For the Cortex-M0+, this predictable loop is faster than complex branching.
+  int i = 0;
+  for (int k = 0; k < ampCompTableSize - 2; k++) {
+    // Find the 3-point window [k, k+1, k+2] that contains our target frequency x.
+    if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
+      i = k;
+      break;
+    }
+  }
+
+  // --- 3. Perform the Fixed-Point Quadratic Calculation ---
+  // The logic from here is proven to be fast and numerically stable.
+  const int32_t dx = x - xBaseWIN[voiceN][i];
+  const int32_t dx02 = dxWIN[voiceN][i];
+
+  // The search guarantees dx is positive, but we must still clamp the upper bound.
+  const int32_t clamped_dx = (dx > dx02) ? dx02 : dx;
+
+  const uint32_t invDx_q28 = invDxWIN_q28[voiceN][i];
+  const uint16_t t_q = (uint16_t)(((uint64_t)clamped_dx * invDx_q28) >> (28 - T_FRAC));
+  const uint16_t t2 = (uint16_t)(((uint32_t)t_q * t_q) >> T_FRAC);
+
+  const int64_t aQ = aQWIN[voiceN][i];
+  const int64_t bQ = bQWIN[voiceN][i];
+  const int32_t cQ = cQWIN[voiceN][i];
+
+  const int32_t quad_term = (int32_t)((aQ * (int64_t)t2) >> T_FRAC);
+  const int32_t lin_term  = (int32_t)((bQ * (int64_t)t_q) >> T_FRAC);
+  const int32_t yQ   = quad_term + lin_term + (cQ << T_FRAC);
+  int32_t y = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);
+
+  // --- 4. Clamp and Return Final Value ---
+  if (y < 0) y = 0;
+  if (y > (int32_t)DIV_COUNTER) y = (int32_t)DIV_COUNTER;
+  
+  return (uint16_t)y;
+}
+
 // Float reference version (kept for fallback/testing)
 inline uint16_t get_chan_level_lookup_float(int32_t x, uint8_t voiceN) {
   if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
@@ -823,15 +920,6 @@ inline uint16_t get_chan_level_lookup_float(int32_t x, uint8_t voiceN) {
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
   return (uint16_t)y;
-}
-
-// Unified wrapper to switch implementation at compile time
-inline uint16_t get_chan_level(int32_t x, uint8_t voiceN) {
-#ifdef AMP_COMP_USE_FLOAT
-  return get_chan_level_lookup_float(x, voiceN);
-#else
-  return get_chan_level_lookup(x, voiceN);
-#endif
 }
 
 inline uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
@@ -958,7 +1046,7 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), chanLevel);
         break;
       case 3:
-        chanLevel = get_chan_level((int32_t)(freq * 100), currentDCO);
+        chanLevel = get_chan_level_lookup_float((int32_t)(freq * 100), currentDCO);
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), chanLevel);
       case 4:
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), calibrationValue);
@@ -1016,8 +1104,8 @@ void voice_task_debug() {
 
       register uint32_t clk_div2 = (uint32_t)(((float)eightSysClock_Hz_u / freq2) - eightPioPulseLength - 1);
 
-      uint16_t chanLevel = get_chan_level((int32_t)(freq * 100), (i * 2));
-      uint16_t chanLevel2 = get_chan_level((int32_t)(freq2 * 100), (i * 2) + 1);
+      uint16_t chanLevel = get_chan_level_lookup_float((int32_t)(freq * 100), (i * 2));
+      uint16_t chanLevel2 = get_chan_level_lookup_float((int32_t)(freq2 * 100), (i * 2) + 1);
 
       if (oscSync == 0) {
 
@@ -1047,15 +1135,15 @@ void voice_task_debug() {
             default:
               break;
           }
-          uint16_t chanLevel = get_chan_level((int32_t)(freq * 100), (i * 2));
-          uint16_t chanLevel2 = get_chan_level((int32_t)(freq2 * 100), (i * 2) + 1);
+          uint16_t chanLevel = get_chan_level_lookup_float((int32_t)(freq * 100), (i * 2));
+          uint16_t chanLevel2 = get_chan_level_lookup_float((int32_t)(freq2 * 100), (i * 2) + 1);
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
           pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
         }
       }
       if (timer99microsFlag) {
-        uint16_t chanLevel = get_chan_level((int32_t)(freq * 100), (i * 2));
-        uint16_t chanLevel2 = get_chan_level((int32_t)(freq2 * 100), (i * 2) + 1);
+        uint16_t chanLevel = get_chan_level_lookup_float((int32_t)(freq * 100), (i * 2));
+        uint16_t chanLevel2 = get_chan_level_lookup_float((int32_t)(freq2 * 100), (i * 2) + 1);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
       }
@@ -1343,3 +1431,69 @@ void print_voice_task_timings() {
 // #endif
 //   return y;
 // }
+
+inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
+  static int lastSegIdx[NUM_OSCILLATORS] = {0};
+  // If frequency is at/above max comp band, drive full-scale level
+  if (x >= AMP_COMP_MAX_HZ_Q) {
+    return (uint16_t)DIV_COUNTER;
+  }
+  // Clamp bounds
+  if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
+  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) return ampCompArray[voiceN][ampCompTableSize - 1];
+
+  // Use cached window first
+  int i = lastSegIdx[voiceN];
+  if (i < 0) i = 0;
+  if (i > ampCompTableSize - 3) i = ampCompTableSize - 3;
+  if (ampCompFrequencyArray[voiceN][i] <= x && x <= ampCompFrequencyArray[voiceN][i + 2]) {
+    // ok
+  } else if ((i + 1) <= (ampCompTableSize - 3) && ampCompFrequencyArray[voiceN][i + 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 3]) {
+    i = i + 1;
+  } else if ((i - 1) >= 0 && ampCompFrequencyArray[voiceN][i - 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 1]) {
+    i = i - 1;
+  } else {
+    // Short linear scan (rare)
+    for (int k = 0; k < ampCompTableSize - 2; k++) {
+      if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
+        i = k;
+        break;
+      }
+    }
+  }
+  lastSegIdx[voiceN] = i;
+
+  // Fixed-point eval in window i..i+2
+  int32_t x0 = xBaseWIN[voiceN][i];
+  int32_t dx02 = dxWIN[voiceN][i];
+  // Instrument high window data for voice 0 (diff handler calls amp_comp_debug_window)
+  const uint16_t y1_top = ampCompArray[voiceN][i + 1];
+  const uint16_t y2_top = ampCompArray[voiceN][i + 2];
+  const int32_t x1 = ampCompFrequencyArray[voiceN][i + 1];
+  if ((y1_top >= DIV_COUNTER && y2_top >= DIV_COUNTER) && x >= x1) {
+    return (uint16_t)DIV_COUNTER;
+  }
+  const uint16_t y0 = ampCompArray[voiceN][i];
+  int32_t dx = x - x0;
+  if (dx < 0) dx = 0;
+  if (dx > dx02) dx = dx02;
+  // Q28 reciprocal path: t_q = round((dx / dx02) * 2^T_FRAC)
+  // invDxWIN_q28 = round(2^28 / dx02) precomputed per window
+  const uint32_t invDx_q28 = invDxWIN_q28[voiceN][i];
+  uint32_t t_q = (uint32_t)(((uint64_t)(uint32_t)dx * (uint64_t)invDx_q28) >> (28 - T_FRAC));
+  if (t_q > (uint32_t)(1u << T_FRAC)) t_q = (uint32_t)(1u << T_FRAC);
+
+  // 32-bit polynomial using aQ/bQ (Q(T_FRAC)) and t in Q(T_FRAC):
+  int64_t aQ = (int64_t)aQWIN[voiceN][i];
+  int64_t bQ = (int64_t)bQWIN[voiceN][i];
+  int32_t cQ = (int32_t)cQWIN[voiceN][i];
+  // Fast Q(T_FRAC) polynomial: compute t2 once, do one rounding at the end
+  uint32_t t2   = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);              // Q(T_FRAC)
+  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                           // Q(T_FRAC)
+  int32_t linQ  = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                           // Q(T_FRAC)
+  int32_t yQ    = quadQ + linQ + (cQ << T_FRAC);                                       // Q(T_FRAC)
+  int32_t y     = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);        // Q0
+  if (y < 0) y = 0;
+  if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
+  return (uint16_t)y;
+}
