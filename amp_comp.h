@@ -40,7 +40,7 @@ bool plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
 
 // Per-window normalized quadratic in t = (x - x0) / (x2 - x0), where x,x0,x2 are integer Hz.
 // Runtime uses 32-bit fixed-point t (Q(T_FRAC)) and precomputed integer coefficients.
-static constexpr int T_FRAC = 14;
+static constexpr int T_FRAC = 12;
 int32_t xBaseWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
 int32_t dxWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
 // Use Q28 reciprocal to avoid underflow on very large dx while keeping shifts small

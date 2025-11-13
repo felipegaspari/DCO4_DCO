@@ -835,7 +835,7 @@ static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
   int32_t c = cRow[window];
 
   // Perform the quadratic evaluation with correct scaling at each step.
-  uint32_t t2 = (uint32_t)(((uint64_t)t_q * t_q) >> T_FRAC);
+  uint32_t t2 = (uint32_t)(((uint32_t)t_q * t_q) >> T_FRAC);
   int32_t term_a = (int32_t)((a * t2) >> T_FRAC);
   int32_t term_b = (int32_t)((b * t_q) >> T_FRAC);
   
