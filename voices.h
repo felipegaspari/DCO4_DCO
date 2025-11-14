@@ -28,6 +28,12 @@ int64_t portamento_stop_q24[NUM_VOICES_TOTAL * 2];
 int64_t portamento_cur_freq_q24[NUM_VOICES_TOTAL * 2];
 // per-microsecond step in Q24
 int64_t freqPortaStep_q24[NUM_VOICES_TOTAL * 2];
+
+// Portamento state in note-space (Q16 semitones) for slew-rate mode
+int32_t porta_note_start_q16[NUM_VOICES_TOTAL * 2];
+int32_t porta_note_stop_q16[NUM_VOICES_TOTAL * 2];
+int32_t porta_note_cur_q16[NUM_VOICES_TOTAL * 2];
+int32_t porta_note_step_q16[NUM_VOICES_TOTAL * 2];
 uint8_t highestNote = 124;
 
 bool sqr1Status;

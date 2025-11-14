@@ -37,6 +37,39 @@ void init_voices() {
   voice_task();
 }
 
+// Fast helper: convert a Q16 note (semitones) to Q24 frequency using linear
+// interpolation on the sNotePitches_q24 table. Used in slew-rate mode.
+static inline int64_t noteQ16_to_freqQ24(int32_t note_q16) {
+  const size_t NOTE_TABLE_LEN = sizeof(sNotePitches_q24) / sizeof(sNotePitches_q24[0]);
+  if (NOTE_TABLE_LEN == 0) return 0;
+
+  int32_t noteInt = note_q16 >> 16;
+  uint32_t frac = (uint32_t)note_q16 & 0xFFFF;
+
+  if (noteInt <= 0) {
+    if (NOTE_TABLE_LEN == 1) return sNotePitches_q24[0];
+    if (frac == 0) return sNotePitches_q24[0];
+    int64_t f0 = sNotePitches_q24[0];
+    int64_t f1 = sNotePitches_q24[1];
+    int64_t df = f1 - f0;
+    return f0 + ((df * (int64_t)frac) >> 16);
+  }
+  if ((size_t)noteInt >= NOTE_TABLE_LEN - 1) {
+    // Clamp to top of table
+    return sNotePitches_q24[NOTE_TABLE_LEN - 1];
+  }
+
+  if (frac == 0) {
+    // Exact semitone, just return table entry (common case).
+    return sNotePitches_q24[noteInt];
+  }
+
+  int64_t f0 = sNotePitches_q24[noteInt];
+  int64_t f1 = sNotePitches_q24[noteInt + 1];
+  int64_t df = f1 - f0;
+  return f0 + ((df * (int64_t)frac) >> 16);
+}
+
 inline void voice_task() {
 #ifdef RUNNING_AVERAGE
   unsigned long voice_task_start_time = micros();
@@ -135,24 +168,26 @@ inline void voice_task() {
 
           portamentoTimer[i] = 0;
 
-          // Derive endpoints directly in Q24
-          int64_t startA_q24 = portamento_cur_freq_q24[DCO_A];
-          int64_t startB_q24 = portamento_cur_freq_q24[DCO_B];
+          // Derive endpoints for portamento
           int64_t stopA_q24 = sNotePitches_q24[note1];
           int64_t stopB_q24 = sNotePitches_q24[note2];
-          portamento_start_q24[DCO_A] = startA_q24;
-          portamento_start_q24[DCO_B] = startB_q24;
           portamento_stop_q24[DCO_A] = stopA_q24;
           portamento_stop_q24[DCO_B] = stopB_q24;
-          portamento_cur_freq_q24[DCO_A] = startA_q24;
-          portamento_cur_freq_q24[DCO_B] = startB_q24;
 
-          // Per-microsecond step in Q24 (computed once per glide)
           int32_t T = (portaTime == 0) ? 1 : (int32_t)portaTime;
-          int64_t dA = portamento_stop_q24[DCO_A] - portamento_start_q24[DCO_A];
-          int64_t dB = portamento_stop_q24[DCO_B] - portamento_start_q24[DCO_B];
 
           if (portaMode == PORTA_MODE_TIME) {
+            // Time-based mode: glide linearly in frequency.
+            int64_t startA_q24 = portamento_cur_freq_q24[DCO_A];
+            int64_t startB_q24 = portamento_cur_freq_q24[DCO_B];
+            portamento_start_q24[DCO_A] = startA_q24;
+            portamento_start_q24[DCO_B] = startB_q24;
+            portamento_cur_freq_q24[DCO_A] = startA_q24;
+            portamento_cur_freq_q24[DCO_B] = startB_q24;
+
+            int64_t dA = stopA_q24 - startA_q24;
+            int64_t dB = stopB_q24 - startB_q24;
+
             // Fixed-time glide: span is covered in approximately portaTime microseconds.
             int64_t halfT = (int64_t)T >> 1;
             int64_t numA = (dA >= 0) ? (dA + halfT) : (dA - halfT);
@@ -160,26 +195,46 @@ inline void voice_task() {
             freqPortaStep_q24[DCO_A] = (numA / (int64_t)T);
             freqPortaStep_q24[DCO_B] = (numB / (int64_t)T);
           } else {
-            // Analog-style slew-rate: constant frequency step per microsecond,
-            // derived from a reference interval so that larger jumps take proportionally longer.
-            static int64_t portaRefDelta_q24 = 0;
-            if (portaRefDelta_q24 == 0) {
-              const uint8_t noteLo = 60;  // middle C-ish
-              const uint8_t noteHi = 72;  // +1 octave
-              const size_t NOTE_TABLE_LEN = sizeof(sNotePitches_q24) / sizeof(sNotePitches_q24[0]);
-              uint8_t idxLo = (noteLo < NOTE_TABLE_LEN) ? noteLo : (uint8_t)(NOTE_TABLE_LEN - 1);
-              uint8_t idxHi = (noteHi < NOTE_TABLE_LEN) ? noteHi : (uint8_t)(NOTE_TABLE_LEN - 1);
-              int64_t ref = sNotePitches_q24[idxHi] - sNotePitches_q24[idxLo];
-              if (ref < 0) ref = -ref;
-              if (ref == 0) ref = 1;  // avoid zero
-              portaRefDelta_q24 = ref;
+            // Slew-rate (musical) mode: glide linearly in note-space (semitones).
+            // Use current note position as start; if uninitialized, fall back to target note.
+            int32_t startNoteA_q16 = porta_note_cur_q16[DCO_A];
+            int32_t startNoteB_q16 = porta_note_cur_q16[DCO_B];
+            int32_t targetNoteA_q16 = ((int32_t)note1) << 16;
+            int32_t targetNoteB_q16 = ((int32_t)note2) << 16;
+
+            if (startNoteA_q16 == 0) startNoteA_q16 = targetNoteA_q16;
+            if (startNoteB_q16 == 0) startNoteB_q16 = targetNoteB_q16;
+
+            porta_note_start_q16[DCO_A] = startNoteA_q16;
+            porta_note_start_q16[DCO_B] = startNoteB_q16;
+            porta_note_stop_q16[DCO_A] = targetNoteA_q16;
+            porta_note_stop_q16[DCO_B] = targetNoteB_q16;
+
+            int32_t dNoteA_q16 = porta_note_stop_q16[DCO_A] - porta_note_start_q16[DCO_A];
+            int32_t dNoteB_q16 = porta_note_stop_q16[DCO_B] - porta_note_start_q16[DCO_B];
+
+            // Per-microsecond step in Q16 notes.
+            // Use symmetric rounding for step magnitude.
+            int64_t halfT = (int64_t)T >> 1;
+            int64_t numA = (dNoteA_q16 >= 0) ? ((int64_t)dNoteA_q16 + halfT) : ((int64_t)dNoteA_q16 - halfT);
+            int64_t numB = (dNoteB_q16 >= 0) ? ((int64_t)dNoteB_q16 + halfT) : ((int64_t)dNoteB_q16 - halfT);
+            porta_note_step_q16[DCO_A] = (int32_t)(numA / (int64_t)T);
+            porta_note_step_q16[DCO_B] = (int32_t)(numB / (int64_t)T);
+
+            // Ensure we always move for non-zero intervals; otherwise tiny intervals
+            // with long times could quantize to zero step and "stick".
+            if (dNoteA_q16 != 0 && porta_note_step_q16[DCO_A] == 0) {
+              porta_note_step_q16[DCO_A] = (dNoteA_q16 > 0) ? 1 : -1;
+            }
+            if (dNoteB_q16 != 0 && porta_note_step_q16[DCO_B] == 0) {
+              porta_note_step_q16[DCO_B] = (dNoteB_q16 > 0) ? 1 : -1;
             }
 
-            int64_t slewStep = portaRefDelta_q24 / (int64_t)T;
-            if (slewStep <= 0) slewStep = 1;  // minimal non-zero slew
-
-            freqPortaStep_q24[DCO_A] = (dA >= 0) ? slewStep : -slewStep;
-            freqPortaStep_q24[DCO_B] = (dB >= 0) ? slewStep : -slewStep;
+            // Initialize current note and frequency at start of glide
+            porta_note_cur_q16[DCO_A] = startNoteA_q16;
+            porta_note_cur_q16[DCO_B] = startNoteB_q16;
+            portamento_cur_freq_q24[DCO_A] = noteQ16_to_freqQ24(startNoteA_q16);
+            portamento_cur_freq_q24[DCO_B] = noteQ16_to_freqQ24(startNoteB_q16);
           }
         }
 
@@ -199,72 +254,85 @@ inline void voice_task() {
             curB = portamento_start_q24[DCO_B] + freqPortaStep_q24[DCO_B] * (int64_t)elapsed_us;
           }
         } else {
-          // Slew-rate mode: step is constant; stop when we reach or cross the target.
-          int64_t dA = portamento_stop_q24[DCO_A] - portamento_start_q24[DCO_A];
-          int64_t dB = portamento_stop_q24[DCO_B] - portamento_start_q24[DCO_B];
+          // Slew-rate (musical) mode: step is constant in note-space; stop when we reach the target.
+          int32_t dNoteA_q16 = porta_note_stop_q16[DCO_A] - porta_note_start_q16[DCO_A];
+          int32_t dNoteB_q16 = porta_note_stop_q16[DCO_B] - porta_note_start_q16[DCO_B];
 
-          curA = portamento_start_q24[DCO_A] + freqPortaStep_q24[DCO_A] * (int64_t)elapsed_us;
-          curB = portamento_start_q24[DCO_B] + freqPortaStep_q24[DCO_B] * (int64_t)elapsed_us;
+          int64_t curNoteA_q16 = (int64_t)porta_note_start_q16[DCO_A] + (int64_t)porta_note_step_q16[DCO_A] * (int64_t)elapsed_us;
+          int64_t curNoteB_q16 = (int64_t)porta_note_start_q16[DCO_B] + (int64_t)porta_note_step_q16[DCO_B] * (int64_t)elapsed_us;
 
-          if ((dA >= 0 && curA >= portamento_stop_q24[DCO_A]) ||
-              (dA < 0 && curA <= portamento_stop_q24[DCO_A])) {
-            curA = portamento_stop_q24[DCO_A];
+          // Clamp when passing the target
+          if ((dNoteA_q16 >= 0 && curNoteA_q16 >= (int64_t)porta_note_stop_q16[DCO_A]) ||
+              (dNoteA_q16 < 0 && curNoteA_q16 <= (int64_t)porta_note_stop_q16[DCO_A])) {
+            curNoteA_q16 = porta_note_stop_q16[DCO_A];
           }
-          if ((dB >= 0 && curB >= portamento_stop_q24[DCO_B]) ||
-              (dB < 0 && curB <= portamento_stop_q24[DCO_B])) {
-            curB = portamento_stop_q24[DCO_B];
+          if ((dNoteB_q16 >= 0 && curNoteB_q16 >= (int64_t)porta_note_stop_q16[DCO_B]) ||
+              (dNoteB_q16 < 0 && curNoteB_q16 <= (int64_t)porta_note_stop_q16[DCO_B])) {
+            curNoteB_q16 = porta_note_stop_q16[DCO_B];
           }
+
+          porta_note_cur_q16[DCO_A] = (int32_t)curNoteA_q16;
+          porta_note_cur_q16[DCO_B] = (int32_t)curNoteB_q16;
+
+          curA = noteQ16_to_freqQ24(porta_note_cur_q16[DCO_A]);
+          curB = noteQ16_to_freqQ24(porta_note_cur_q16[DCO_B]);
         }
 
         portamento_cur_freq_q24[DCO_A] = curA;
         portamento_cur_freq_q24[DCO_B] = curB;
 
-        // If the portamento time control changed while gliding, retime the glide
-        // from the *current* frequency so there is no pitch jump, only a change
-        // in glide speed (analog-style behaviour).
+        // If the portamento time or mode control changed while gliding, retime the glide
+        // from the *current* position so there is no pitch jump, only a change
+        // in glide speed / curve.
         if (portaTimeChanged || portaModeChanged) {
-          int64_t targetA = sNotePitches_q24[note1];
-          int64_t targetB = sNotePitches_q24[note2];
+          int32_t T = (portaTime == 0) ? 1 : (int32_t)portaTime;
 
-          // Only retime if we are actually in transit towards the target
-          if (curA != targetA || curB != targetB) {
+          portamentoStartMicros[i] = now_us;
+          portamentoTimer[i] = 0;
+
+          if (portaMode == PORTA_MODE_TIME) {
+            // Recompute time-based glide from current frequency.
+            int64_t targetA = sNotePitches_q24[note1];
+            int64_t targetB = sNotePitches_q24[note2];
+
             portamento_start_q24[DCO_A] = curA;
             portamento_start_q24[DCO_B] = curB;
             portamento_stop_q24[DCO_A] = targetA;
             portamento_stop_q24[DCO_B] = targetB;
 
-            portamentoStartMicros[i] = now_us;
-            portamentoTimer[i] = 0;
+            int64_t dA = targetA - curA;
+            int64_t dB = targetB - curB;
+            int64_t halfT = (int64_t)T >> 1;
+            int64_t numA = (dA >= 0) ? (dA + halfT) : (dA - halfT);
+            int64_t numB = (dB >= 0) ? (dB + halfT) : (dB - halfT);
+            freqPortaStep_q24[DCO_A] = (numA / (int64_t)T);
+            freqPortaStep_q24[DCO_B] = (numB / (int64_t)T);
+          } else {
+            // Recompute slew-rate glide from current note position.
+            int32_t currentNoteA_q16 = porta_note_cur_q16[DCO_A];
+            int32_t currentNoteB_q16 = porta_note_cur_q16[DCO_B];
+            int32_t targetNoteA_q16 = ((int32_t)note1) << 16;
+            int32_t targetNoteB_q16 = ((int32_t)note2) << 16;
 
-            int32_t T = (portaTime == 0) ? 1 : (int32_t)portaTime;
-            int64_t dA = portamento_stop_q24[DCO_A] - portamento_start_q24[DCO_A];
-            int64_t dB = portamento_stop_q24[DCO_B] - portamento_start_q24[DCO_B];
+            porta_note_start_q16[DCO_A] = currentNoteA_q16;
+            porta_note_start_q16[DCO_B] = currentNoteB_q16;
+            porta_note_stop_q16[DCO_A] = targetNoteA_q16;
+            porta_note_stop_q16[DCO_B] = targetNoteB_q16;
 
-            if (portaMode == PORTA_MODE_TIME) {
-              int64_t halfT = (int64_t)T >> 1;
-              int64_t numA = (dA >= 0) ? (dA + halfT) : (dA - halfT);
-              int64_t numB = (dB >= 0) ? (dB + halfT) : (dB - halfT);
-              freqPortaStep_q24[DCO_A] = (numA / (int64_t)T);
-              freqPortaStep_q24[DCO_B] = (numB / (int64_t)T);
-            } else {
-              static int64_t portaRefDelta_q24 = 0;
-              if (portaRefDelta_q24 == 0) {
-                const uint8_t noteLo = 60;
-                const uint8_t noteHi = 72;
-                const size_t NOTE_TABLE_LEN = sizeof(sNotePitches_q24) / sizeof(sNotePitches_q24[0]);
-                uint8_t idxLo = (noteLo < NOTE_TABLE_LEN) ? noteLo : (uint8_t)(NOTE_TABLE_LEN - 1);
-                uint8_t idxHi = (noteHi < NOTE_TABLE_LEN) ? noteHi : (uint8_t)(NOTE_TABLE_LEN - 1);
-                int64_t ref = sNotePitches_q24[idxHi] - sNotePitches_q24[idxLo];
-                if (ref < 0) ref = -ref;
-                if (ref == 0) ref = 1;
-                portaRefDelta_q24 = ref;
-              }
+            int32_t dNoteA_q16 = porta_note_stop_q16[DCO_A] - porta_note_start_q16[DCO_A];
+            int32_t dNoteB_q16 = porta_note_stop_q16[DCO_B] - porta_note_start_q16[DCO_B];
 
-              int64_t slewStep = portaRefDelta_q24 / (int64_t)T;
-              if (slewStep <= 0) slewStep = 1;
+            int64_t halfT = (int64_t)T >> 1;
+            int64_t numA = (dNoteA_q16 >= 0) ? ((int64_t)dNoteA_q16 + halfT) : ((int64_t)dNoteA_q16 - halfT);
+            int64_t numB = (dNoteB_q16 >= 0) ? ((int64_t)dNoteB_q16 + halfT) : ((int64_t)dNoteB_q16 - halfT);
+            porta_note_step_q16[DCO_A] = (int32_t)(numA / (int64_t)T);
+            porta_note_step_q16[DCO_B] = (int32_t)(numB / (int64_t)T);
 
-              freqPortaStep_q24[DCO_A] = (dA >= 0) ? slewStep : -slewStep;
-              freqPortaStep_q24[DCO_B] = (dB >= 0) ? slewStep : -slewStep;
+            if (dNoteA_q16 != 0 && porta_note_step_q16[DCO_A] == 0) {
+              porta_note_step_q16[DCO_A] = (dNoteA_q16 > 0) ? 1 : -1;
+            }
+            if (dNoteB_q16 != 0 && porta_note_step_q16[DCO_B] == 0) {
+              porta_note_step_q16[DCO_B] = (dNoteB_q16 > 0) ? 1 : -1;
             }
           }
         }
