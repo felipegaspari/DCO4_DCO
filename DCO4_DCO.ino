@@ -3,7 +3,7 @@
 // #include <stdlib.h>
 // #include <math.h>
 
-// #define RUNNING_AVERAGE
+#define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"

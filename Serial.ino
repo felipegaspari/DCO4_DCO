@@ -16,258 +16,242 @@ void init_serial() {
   Serial.begin(2000000);
 }
 
+// -------------------------------
+// Serial2 parser (non-blocking)
+// -------------------------------
+//
+// This code parses the high-speed UART link on Serial2 (2.5 Mbps).
+// The protocol is intentionally simple:
+//
+//   [1 byte] command character
+//   [N bytes] payload (length depends on command)
+//
+// There is no explicit start-of-frame marker or checksum. We rely on:
+//   - fixed, known payload sizes per command
+//   - a timeout to drop incomplete frames
+//
+// Current commands and payload layouts (as seen by this parser):
+//
+//   'f' : 2-byte little-endian value
+//         payload[0..1] = uint16_t pwRaw (LE)
+//
+//   's' : 8-byte big-endian ADSR values
+//         payload[0..1] = ADSR1_attack  (BE)
+//         payload[2..3] = ADSR1_decay   (BE)
+//         payload[4..5] = ADSR1_sustain (BE)
+//         payload[6..7] = ADSR1_release (BE)
+//
+//   'p' : 3 bytes + 1 finish byte
+//         payload[0]   = paramNumber
+//         payload[1..2]= paramValue (BE uint16)
+//         payload[3]   = finishByte (not used here)
+//
+//   'w' : 2 bytes + 1 finish byte
+//         payload[0]   = paramNumber
+//         payload[1]   = int8 value (will be sign-extended)
+//         payload[2]   = finishByte (not used here)
+//
+//   'x' : 4 bytes + 1 finish byte
+//         payload[0]   = paramNumber
+//         payload[1..4]= int32 value (LE)
+//         payload[5]   = finishByte (not used here)
+//
+// If you add a new command in the future:
+//   1) Choose a command character.
+//   2) Define the payload layout.
+//   3) Add its expected length to serial2_process_byte().
+//   4) Add a case in serial2_handle_complete_frame().
+//
+// The parser is fully non-blocking: it processes one byte at a time
+// and never spins waiting for data.
+
+// Maximum payload length among all current commands:
+// 'f' = 2, 's' = 8, 'p' = 4, 'w' = 3, 'x' = 5
+static const uint8_t SERIAL2_MAX_PAYLOAD = 8;
+// Timeout to abandon a partially received frame (in microseconds).
+// If the other side stops sending part-way through a frame, we reset
+// the parser after this time so new commands can be received cleanly.
+static const uint32_t SERIAL2_FRAME_TIMEOUT_US = 5000;  // 5 ms is huge at 2.5 Mbps
+
+enum Serial2ParserState : uint8_t {
+  SERIAL2_WAIT_FOR_CMD = 0,  // waiting for the initial command byte
+  SERIAL2_READ_PAYLOAD       // accumulating payload bytes for the current command
+};
+
+struct Serial2ParserContext {
+  Serial2ParserState state;         // current parser state
+  char command;                     // current command character
+  uint8_t payload[SERIAL2_MAX_PAYLOAD];  // payload buffer for this frame
+  uint8_t expected_len;             // how many payload bytes we expect in total
+  uint8_t received_len;             // how many payload bytes we have so far
+  uint32_t last_byte_time_us;       // timestamp of the last received byte (for timeout)
+};
+
+static Serial2ParserContext serial2Parser = {
+  SERIAL2_WAIT_FOR_CMD,
+  0,
+  {0},
+  0,
+  0,
+  0
+};
+
+// Endianness helpers
+static inline uint16_t read_u16_be(const uint8_t *b) {
+  return (uint16_t(b[0]) << 8) | uint16_t(b[1]);
+}
+
+static inline uint16_t read_u16_le(const uint8_t *b) {
+  return uint16_t(b[0]) | (uint16_t(b[1]) << 8);
+}
+
+static inline int32_t read_i32_le(const uint8_t *b) {
+  return int32_t(b[0]) |
+         (int32_t(b[1]) << 8) |
+         (int32_t(b[2]) << 16) |
+         (int32_t(b[3]) << 24);
+}
+
+// Reset the parser to the initial "waiting for command" state.
+static void serial2_reset_parser() {
+  serial2Parser.state = SERIAL2_WAIT_FOR_CMD;
+  serial2Parser.command = 0;
+  serial2Parser.expected_len = 0;
+  serial2Parser.received_len = 0;
+  serial2Parser.last_byte_time_us = 0;
+}
+
+// Handle a completely received frame for the specified command.
+// At this point, "payload" contains "length" bytes corresponding
+// to the layouts documented at the top of this file.
+static void serial2_handle_complete_frame(char command, const uint8_t *payload, uint8_t length) {
+
+  switch (command) {
+    case 'f': {
+      // 2-byte value, little-endian, applied to PW[0].
+      // This keeps the original semantics of the previous implementation.
+      if (length == 2) {
+        uint16_t pwRaw = read_u16_le(payload);
+        PW[0] = DIV_COUNTER_PW - (pwRaw / 4);
+      }
+      break;
+    }
+
+    case 's': {
+      // 8 bytes: 4 big-endian uint16 values for ADSR1.
+      if (length == 8) {
+        ADSR1_attack  = read_u16_be(payload + 0);
+        ADSR1_decay   = read_u16_be(payload + 2);
+        ADSR1_sustain = read_u16_be(payload + 4);
+        ADSR1_release = read_u16_be(payload + 6);
+      }
+      break;
+    }
+
+    case 'p': {
+      // [paramNumber, value_hi, value_lo, finishByte]
+      // 16-bit big-endian value, passed directly to update_parameters().
+      if (length == 4) {
+        uint8_t  paramNumber = payload[0];
+        uint16_t paramValue  = read_u16_be(payload + 1);
+        update_parameters(paramNumber, paramValue);
+      }
+      break;
+    }
+
+    case 'w': {
+      // [paramNumber, int8 value, finishByte]
+      // The int8 value is sign-extended to int16 and then cast to uint16,
+      // preserving the behavior of the original code.
+      if (length == 3) {
+        uint8_t paramNumber = payload[0];
+        int16_t paramValue  = int8_t(payload[1]);  // keep previous semantics
+        update_parameters(paramNumber, (uint16_t)paramValue);
+      }
+      break;
+    }
+
+    case 'x': {
+      // [paramNumber, int32_t value (little-endian), finishByte]
+      // 32-bit little-endian value, passed directly to update_parameters().
+      if (length == 5) {
+        uint8_t  paramNumber = payload[0];
+        int32_t  paramValue  = read_i32_le(payload + 1);
+        update_parameters(paramNumber, paramValue);
+      }
+      break;
+    }
+
+    default:
+      // Unknown command: ignore frame
+      break;
+  }
+}
+
+static void serial2_process_byte(uint8_t b, uint32_t now_us) {
+
+  // Timeout handling: if we're partway through a frame and it takes too long, reset.
+  if (serial2Parser.state == SERIAL2_READ_PAYLOAD &&
+      serial2Parser.last_byte_time_us != 0 &&
+      (uint32_t)(now_us - serial2Parser.last_byte_time_us) > SERIAL2_FRAME_TIMEOUT_US) {
+    serial2_reset_parser();
+  }
+
+  serial2Parser.last_byte_time_us = now_us;
+
+  if (serial2Parser.state == SERIAL2_WAIT_FOR_CMD) {
+    char commandCharacter = (char)b;
+
+    // Determine expected payload length for this command.
+    uint8_t expected_len = 0;
+    switch (commandCharacter) {
+      case 'f': expected_len = 2; break;
+      case 's': expected_len = 8; break;
+      case 'p': expected_len = 4; break;
+      case 'w': expected_len = 3; break;
+      case 'x': expected_len = 5; break;
+      default:
+        // Unknown command byte, ignore.
+        return;
+    }
+
+    serial2Parser.command = commandCharacter;
+    serial2Parser.expected_len = expected_len;
+    serial2Parser.received_len = 0;
+    serial2Parser.state = SERIAL2_READ_PAYLOAD;
+    return;
+  }
+
+  // SERIAL2_READ_PAYLOAD
+  if (serial2Parser.received_len < SERIAL2_MAX_PAYLOAD) {
+    serial2Parser.payload[serial2Parser.received_len++] = b;
+  }
+
+  if (serial2Parser.received_len >= serial2Parser.expected_len) {
+    serial2_handle_complete_frame(serial2Parser.command, serial2Parser.payload, serial2Parser.received_len);
+    serial2_reset_parser();
+  }
+}
+
+static void serial2_check_timeout() {
+  if (serial2Parser.state == SERIAL2_READ_PAYLOAD && serial2Parser.last_byte_time_us != 0) {
+    uint32_t now_us = micros();
+    if ((uint32_t)(now_us - serial2Parser.last_byte_time_us) > SERIAL2_FRAME_TIMEOUT_US) {
+      serial2_reset_parser();
+    }
+  }
+}
+
 void serial_STM32_task() {
 
+  // First, expire any stale partial frame
+  serial2_check_timeout();
+
+  // Then, consume all available bytes without blocking
   while (Serial2.available() > 0) {
-    char commandCharacter = Serial2.read();
-    switch (commandCharacter) {
-        // case 'v':
-        //   {
-        //     while (Serial2.available() < 1) {}
-        //     Serial2.readBytes(dataArray, 4);
-        //     ((uint8_t *)&LFOMultiplier)[0] = dataArray[0];
-        //     ((uint8_t *)&LFOMultiplier)[1] = dataArray[1];
-        //     ((uint8_t *)&LFOMultiplier)[2] = dataArray[2];
-        //     ((uint8_t *)&LFOMultiplier)[3] = dataArray[3];
-        //     break;
-        //  }
-        // case 'b':
-        //   {
-        //     while (Serial2.available() < 1) {}
-        //     LFO1Waveform = Serial2.read();
-        //     LFO1_class.setWaveForm(LFO1Waveform);
-        //     break;
-        //   }
-        // case 'p':
-        //   {
-        //     //while (Serial2.available() < 1) {}
-        //     // Serial2.readBytes(dataArray, 5);
-
-        //     // ((uint8_t *)&DETUNE2)[0] = dataArray[0];
-        //     // ((uint8_t *)&DETUNE2)[1] = dataArray[1];
-        //     // ((uint8_t *)&DETUNE2)[2] = dataArray[2];
-        //     // ((uint8_t *)&DETUNE2)[3] = dataArray[3];
-        //     //OSC2_serial_detune = dataArray[4];
-
-        //     break;
-        //   }
-
-      // case 'q':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     OSC2_serial_detune = Serial2.read();
-      //     break;
-      //   }
-
-      // case 'u':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     Serial2.readBytes(dataArray, 2);
-
-      //     ((uint8_t *)&dato_serial)[0] = dataArray[0];
-      //     ((uint8_t *)&dato_serial)[1] = dataArray[1];
-
-      //     break;
-      //   }
-
-      // case 'a':
-      //   {
-      //     //Serial.println(" Received ""a"" ");
-      //     uint8_t autotuneByte = Serial2.read();
-      //     if (autotuneByte == 255) {
-      //       autotuneOnFlag = true;
-      //       init_DCO_calibration();
-      //     } else {
-      //       autotuneOnFlag = false;
-      //     }
-      //     break;
-      //   }
-
-      // case 'r':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     uint8_t portaSerial = Serial2.read();
-      //     if (portaSerial == 0) {
-      //       portamento_time = 0;
-      //     } else if (portaSerial < 200) {
-      //       portamento_time = (expConverter(portaSerial + 15, 100) * 2000);
-      //     } else {
-      //       portamento_time = map(portaSerial, 200, 255, 1000000, 10000000);
-      //     }
-      //     break;
-      //   }
-
-      // case 'w':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     Serial2.readBytes(dataArray, 2);
-      //     ((uint8_t *)&ADSR1toDETUNE1)[0] = dataArray[0];
-      //     ((uint8_t *)&ADSR1toDETUNE1)[1] = dataArray[1];
-      //     ADSR1toDETUNE1_formula = (float)1 / 1080000 * (int16_t)ADSR1toDETUNE1;
-      //     break;
-      //   }
-      // case 't':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     oscSync = Serial2.read();
-      //     break;
-      //   }
-      // case 'l':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     Serial2.readBytes(dataArray, 2);
-
-      //     ((uint8_t *)&LFO1SpeedVal)[0] = dataArray[0];
-      //     ((uint8_t *)&LFO1SpeedVal)[1] = dataArray[1];
-
-      //     LFO1Speed = expConverterFloat(LFO1SpeedVal, 5000);
-      //     LFO1_class.setMode0Freq((float)LFO1Speed, micros());
-
-      //     break;
-      //   }
-      // case 'm':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     Serial2.readBytes(dataArray, 2);
-
-      //     ((uint8_t *)&LFO1toDCOVal)[0] = dataArray[0];
-      //     ((uint8_t *)&LFO1toDCOVal)[1] = dataArray[1];
-
-      //     //LFO1toDCO = expConverterFloat(LFO1toDCOVal, 500);
-
-      //     LFO1toDCO = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000;
-
-      //     break;
-      //   }
-      // case 'y':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     OSC1_interval = Serial2.read();
-      //     break;
-      //   }
-      // case 'z':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     OSC2_interval = Serial2.read();
-      //     break;
-      //   }
-      // case 'c':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     ADSR3ToOscSelect = Serial2.read();
-      //     break;
-      //   }
-      // case 'd':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     voiceMode = Serial2.read();
-      //     setVoiceMode();
-      //   }
-      // case 'e':
-      //   {
-      //     while (Serial2.available() < 1) {}
-      //     unisonDetune = Serial2.read();
-      //     break;
-      //   }
-      case 'f':
-        {
-          while (Serial2.available() < 1) {}
-          Serial2.readBytes(dataArray, 2);
-          ((uint8_t *)&PW[0])[0] = dataArray[0];
-          ((uint8_t *)&PW[0])[1] = dataArray[1];
-          PW[0] = DIV_COUNTER_PW - (PW[0] / 4);
-          break;
-        }
-      case 's':
-        {
-          while (Serial2.available() < 1) {}
-          byte byteArray[8];
-          Serial2.readBytes(byteArray, 8);
-
-          ADSR1_attack = word(byteArray[0], byteArray[1]);
-          ADSR1_decay = word(byteArray[2], byteArray[3]);
-          ADSR1_sustain = word(byteArray[4], byteArray[5]);
-          ADSR1_release = word(byteArray[6], byteArray[7]);
-
-          break;
-        }
-        //case 'h':
-        // {
-        //   while (Serial2.available() < 1) {}
-        //   Serial2.readBytes(dataArray, 2);
-        //   ((uint8_t *)&LFO2toPW)[0] = dataArray[0];
-        //   ((uint8_t *)&LFO2toPW)[1] = dataArray[1];
-        //   LFO2toPW = LFO2toPW / 4;
-        //   LFO2toPWM_formula = (float)1 / 64 * LFO2toPW;
-        //   break;
-        // }
-        // case 'j':
-        //   {
-        //     while (Serial2.available() < 1) {}
-        //     PWMPotsControlManual = Serial2.read();
-        //     break;
-        //   }
-      case 'p':
-        {
-          byte paramBytes[3];
-          byte finishByte = 1;
-          byte readByte = 0;
-
-          while (Serial2.available() < 1) {}
-
-          Serial2.readBytes(paramBytes, 3);
-          readByte = Serial2.read();
-
-          uint8_t paramNumber = paramBytes[0];
-          uint16_t paramValue = (int16_t)word(paramBytes[1], paramBytes[2]);
-
-          //Serial.print((String)"   number: " + paramNumber + (String)"   value: " + paramValue);
-          update_parameters(paramNumber, paramValue);
-
-          break;
-        }
-
-      case 'w':
-        {
-          byte paramBytes[3];
-          byte finishByte = 1;
-          byte readByte = 0;
-
-          while (Serial2.available() < 1) {}
-
-          Serial2.readBytes(paramBytes, 3);
-
-          uint8_t paramNumber = paramBytes[0];
-          int16_t paramValue = paramBytes[1];
-
-          update_parameters(paramNumber, (uint16_t)paramValue);
-
-          break;
-        }
-      case 'x':
-        {
-          byte paramBytes[5];
-          byte paramValueArray[4];
-          byte finishByte = 1;
-          byte readByte = 0;
-          int32_t paramValue;
-
-          while (Serial2.available() < 1) {}
-
-          Serial2.readBytes(paramBytes, 5);
-
-          uint8_t paramNumber = paramBytes[0];
-          paramValueArray[0] = paramBytes[1];
-          paramValueArray[1] = paramBytes[2];
-          paramValueArray[2] = paramBytes[3];
-          paramValueArray[3] = paramBytes[4];
-
-          memcpy(&paramValue, paramValueArray, 4);
-
-          update_parameters(paramNumber, paramValue);
-          break;
-        }
-    }
+    uint8_t b = Serial2.read();
+    uint32_t now_us = micros();
+    serial2_process_byte(b, now_us);
   }
 }
 
