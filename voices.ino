@@ -3,54 +3,6 @@
 // Enable/disable detailed DCO debug report (including OSC1 frequency stages)
 #define DCO_DEBUG_REPORT 0
 
-static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
-  int window = 0;
-  for (int k = 0; k < ampCompTableSize - 2; ++k) {
-    if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
-      window = k;
-      break;
-    }
-  }
-  if (window < 0) window = 0;
-  if (window > ampCompTableSize - 3) window = ampCompTableSize - 3;
-
-  int32_t x0 = ampCompFrequencyArray[voiceN][window];
-  int32_t x1 = ampCompFrequencyArray[voiceN][window + 1];
-  int32_t x2 = ampCompFrequencyArray[voiceN][window + 2];
-  uint16_t y0 = ampCompArray[voiceN][window];
-  uint16_t y1 = ampCompArray[voiceN][window + 1];
-  uint16_t y2 = ampCompArray[voiceN][window + 2];
-  bool useDouble = useDoubleWindow[voiceN][window];
-  double aD = aCoeffD[voiceN][window];
-  double bD = bCoeffD[voiceN][window];
-  double cD = cCoeffD[voiceN][window];
-
-  Serial.print("[AMPWINDBG] v=");
-  Serial.print(voiceN);
-  Serial.print(" win=");
-  Serial.print(window);
-  Serial.print(" useDouble=");
-  Serial.print(useDouble ? "1" : "0");
-  Serial.print(" x0=");
-  Serial.print(x0);
-  Serial.print(" x1=");
-  Serial.print(x1);
-  Serial.print(" x2=");
-  Serial.print(x2);
-  Serial.print(" y0=");
-  Serial.print(y0);
-  Serial.print(" y1=");
-  Serial.print(y1);
-  Serial.print(" y2=");
-  Serial.print(y2);
-  Serial.print(" aD=");
-  Serial.print(aD, 6);
-  Serial.print(" bD=");
-  Serial.print(bD, 6);
-  Serial.print(" cD=");
-  Serial.print(cD, 6);
-  Serial.println();
-}
 
 #ifdef RUNNING_AVERAGE
 // RunningAverage object definitions for timing measurements
@@ -83,24 +35,6 @@ void init_voices() {
   initMultiplierTables();
   setVoiceMode();
   voice_task();
-
-#ifdef RUNNING_AVERAGE
-  // Clear all running averages
-  ra_pitchbend.clear();
-  ra_osc2_detune.clear();
-  ra_portamento.clear();
-  ra_adsr_modifier.clear();
-  ra_unison_modifier.clear();
-  ra_drift_multiplier.clear();
-  ra_modifiers_combination.clear();
-  ra_freq_scaling_x.clear();
-  ra_freq_scaling_ratio.clear();
-  ra_freq_scaling_post.clear();
-  ra_get_chan_level.clear();
-  ra_pwm_calculations.clear();
-  ra_voice_task_total.clear();
-  ra_clk_div_calc.clear();
-#endif
 }
 
 inline void voice_task() {
@@ -532,8 +466,8 @@ inline void voice_task() {
 #endif
 
         if (oscSync == 1) {
-          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(8 + offset[pioNumberA]));  // OSC Sync MODE
-          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(8 + offset[pioNumberB]));
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
         }
 
         if (oscSync > 1) {
@@ -559,16 +493,7 @@ inline void voice_task() {
 
           pio_set_sm_mask_enabled(pioN_A, sm_mask, true);
         }
-        // if (oscSync > 0) {
-        //   pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
-        //   pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
 
-        //   if (oscSync > 1) {
-        //     pio_sm_put(pioN_B, sm2N, pioPulseLength + phaseDelay - correctionPioPulseLength);
-        //     pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
-        //     pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
-        //   }
-        // }
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
         pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
       }
@@ -600,8 +525,6 @@ inline void voice_task() {
         } else {
           pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
         }
-        // Serial.println("VOICE TASK 13");
-        // pwm_set_chan_level(VCO_PWM_SLICES[0], pwm_gpio_to_channel(22), (uint16_t)(vcoLevel)); // VCO control
       }
     }
     note_on_flag_flag[i] = false;
@@ -622,12 +545,6 @@ inline void voice_task() {
     last_timing_print = current_time;
   }
 #endif
-
-  // Serial.println("VOICE TASK 14");
-  //   voice_task_total_time = micros() - voice_task_start_time;
-  //   if (voice_task_total_time >= 20) {
-  //     Serial.println((String) " - T1: " + voice_task_1_time + (String) " - T2: " + voice_task_2_time + (String) " - T3: " + voice_task_3_time + (String) " - T4: " + voice_task_4_time + (String) " - TT: " + voice_task_total_time);
-  //   }
 }
 
 inline void voice_task_simple() {
@@ -687,7 +604,7 @@ inline void voice_task_simple() {
 
       // voice_task_3_time = micros() - voice_task_start_time;
 
-      uint32_t clk_div1 = (uint32_t)((eightSysClock_Hz_u / freq) - eightPioPulseLength);
+      uint32_t clk_div1 = (uint32_t)((sysClock_Hz / freq) - pioPulseLength) / NUM_OSR_CHUNKS;
       if (freq == 0)
         clk_div1 = 0;
 
@@ -698,9 +615,9 @@ inline void voice_task_simple() {
 
         clk_div2 = (uint32_t)(sysClock_Hz / freq2);
         phaseDelay = (clk_div2 - pioPulseLength) / 180 * phaseAlignOSC2;
-        clk_div2 = (uint32_t)((clk_div2 - pioPulseLength - phaseDelay) / 8);
+        clk_div2 = (uint32_t)((clk_div2 - phaseDelay) / NUM_OSR_CHUNKS);
       } else {
-        clk_div2 = (uint32_t)((eightSysClock_Hz_u / freq2) - eightPioPulseLength);
+        clk_div2 = (uint32_t)((sysClock_Hz / freq2) - pioPulseLength) / NUM_OSR_CHUNKS;
       }
       if (freq2 == 0)
         clk_div2 = 0;
@@ -711,16 +628,16 @@ inline void voice_task_simple() {
 
       switch (syncMode) {
         case 0:
-          chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
-          chanLevel2 = get_chan_level_lookup((int32_t)(freq2 * 100), DCO_B);
+          chanLevel = get_chan_level_fast_from_float(freq, DCO_A);
+          chanLevel2 = get_chan_level_fast_from_float(freq2, DCO_B);
           break;
         case 1:
-          chanLevel = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_A);
-          chanLevel2 = get_chan_level_lookup((int32_t)(freq2 * 100), DCO_B);
+          chanLevel = get_chan_level_fast_from_float(max(freq, freq2), DCO_A);
+          chanLevel2 = get_chan_level_fast_from_float(freq2, DCO_B);
           break;
         case 2:
-          chanLevel = get_chan_level_lookup((int32_t)(freq * 100), DCO_A);
-          chanLevel2 = get_chan_level_lookup((int32_t)(max(freq, freq2) * 100), DCO_B);
+          chanLevel = get_chan_level_fast_from_float(freq, DCO_A);
+          chanLevel2 = get_chan_level_fast_from_float(max(freq, freq2), DCO_B);
           break;
       }
 
@@ -879,6 +796,12 @@ void setSyncMode() {
   }
 }
 
+static inline uint16_t get_chan_level_fast_from_float(float freqHz, uint8_t voiceN) {
+  if (freqHz <= 0.0f) return 0;
+  int32_t fx = (int32_t)(freqHz * (float)(1u << FREQ_FRAC_BITS) + 0.5f);
+  return get_chan_level_lookup_fast(fx, voiceN);
+}
+
 /**
  * @brief Fast amplitude compensation lookup tuned for the RP2040.
  *
@@ -960,49 +883,73 @@ static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
   return (uint16_t)y;
 }
 
-inline uint16_t get_chan_level_optimized(int32_t x, uint8_t voiceN) {
-  // --- 1. Handle Boundary Conditions ---
-  if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
-  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) return ampCompArray[voiceN][ampCompTableSize - 1];
 
-  // --- 2. Find the Correct Interpolation Window via a Simple Linear Scan ---
-  // For the Cortex-M0+, this predictable loop is faster than complex branching.
-  int i = 0;
-  for (int k = 0; k < ampCompTableSize - 2; k++) {
-    // Find the 3-point window [k, k+1, k+2] that contains our target frequency x.
-    if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
-      i = k;
-      break;
+inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
+  static int lastSegIdx[NUM_OSCILLATORS] = { 0 };
+  // If frequency is at/above max comp band, drive full-scale level
+  if (x >= AMP_COMP_MAX_HZ_Q) {
+    return (uint16_t)DIV_COUNTER;
+  }
+  // Clamp bounds
+  if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
+  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize]) return ampCompArray[voiceN][ampCompTableSize];
+
+  // Use cached window first
+  int i = lastSegIdx[voiceN];
+  if (i < 0) i = 0;
+  if (i > ampCompTableSize - 2) i = ampCompTableSize - 2;
+  if (ampCompFrequencyArray[voiceN][i] <= x && x <= ampCompFrequencyArray[voiceN][i + 2]) {
+    // ok
+  } else if ((i + 1) <= (ampCompTableSize - 2) && ampCompFrequencyArray[voiceN][i + 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 3]) {
+    i = i + 1;
+  } else if ((i - 1) >= 0 && ampCompFrequencyArray[voiceN][i - 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 1]) {
+    i = i - 1;
+  } else {
+    // Short linear scan (rare)
+    for (int k = 0; k < ampCompTableSize - 1; k++) {
+      if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
+        i = k;
+        break;
+      }
     }
   }
+  lastSegIdx[voiceN] = i;
 
-  // --- 3. Perform the Fixed-Point Quadratic Calculation ---
-  // The logic from here is proven to be fast and numerically stable.
-  const int32_t dx = x - xBaseWIN[voiceN][i];
-  const int32_t dx02 = dxWIN[voiceN][i];
-
-  // The search guarantees dx is positive, but we must still clamp the upper bound.
-  const int32_t clamped_dx = (dx > dx02) ? dx02 : dx;
-
+  // Fixed-point eval in window i..i+2
+  int32_t x0 = xBaseWIN[voiceN][i];
+  int32_t dx02 = dxWIN[voiceN][i];
+  // Instrument high window data for voice 0 (diff handler calls amp_comp_debug_window)
+  const uint16_t y1_top = ampCompArray[voiceN][i + 1];
+  const uint16_t y2_top = ampCompArray[voiceN][i + 2];
+  const int32_t x1 = ampCompFrequencyArray[voiceN][i + 1];
+  if ((y1_top >= DIV_COUNTER && y2_top >= DIV_COUNTER) && x >= x1) {
+    return (uint16_t)DIV_COUNTER;
+  }
+  const uint16_t y0 = ampCompArray[voiceN][i];
+  int32_t dx = x - x0;
+  if (dx < 0) dx = 0;
+  if (dx > dx02) dx = dx02;
+  // Q28 reciprocal path: t_q = round((dx / dx02) * 2^T_FRAC)
+  // invDxWIN_q28 = round(2^28 / dx02) precomputed per window
   const uint32_t invDx_q28 = invDxWIN_q28[voiceN][i];
-  const uint16_t t_q = (uint16_t)(((uint64_t)clamped_dx * invDx_q28) >> (28 - T_FRAC));
-  const uint16_t t2 = (uint16_t)(((uint32_t)t_q * t_q) >> T_FRAC);
+  uint32_t t_q = (uint32_t)(((uint64_t)(uint32_t)dx * (uint64_t)invDx_q28) >> (28 - T_FRAC));
+  if (t_q > (uint32_t)(1u << T_FRAC)) t_q = (uint32_t)(1u << T_FRAC);
 
-  const int64_t aQ = aQWIN[voiceN][i];
-  const int64_t bQ = bQWIN[voiceN][i];
-  const int32_t cQ = cQWIN[voiceN][i];
-
-  const int32_t quad_term = (int32_t)((aQ * (int64_t)t2) >> T_FRAC);
-  const int32_t lin_term = (int32_t)((bQ * (int64_t)t_q) >> T_FRAC);
-  const int32_t yQ = quad_term + lin_term + (cQ << T_FRAC);
-  int32_t y = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);
-
-  // --- 4. Clamp and Return Final Value ---
+  // 32-bit polynomial using aQ/bQ (Q(T_FRAC)) and t in Q(T_FRAC):
+  int64_t aQ = (int64_t)aQWIN[voiceN][i];
+  int64_t bQ = (int64_t)bQWIN[voiceN][i];
+  int32_t cQ = (int32_t)cQWIN[voiceN][i];
+  // Fast Q(T_FRAC) polynomial: compute t2 once, do one rounding at the end
+  uint32_t t2 = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);       // Q(T_FRAC)
+  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                 // Q(T_FRAC)
+  int32_t linQ = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                 // Q(T_FRAC)
+  int32_t yQ = quadQ + linQ + (cQ << T_FRAC);                                // Q(T_FRAC)
+  int32_t y = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);  // Q0
   if (y < 0) y = 0;
-  if (y > (int32_t)DIV_COUNTER) y = (int32_t)DIV_COUNTER;
-
+  if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
   return (uint16_t)y;
 }
+
 
 // Float reference version (kept for fallback/testing)
 inline uint16_t get_chan_level_lookup_float(int32_t x, uint8_t voiceN) {
@@ -1066,30 +1013,6 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
     freq = (float)sNotePitches[note1];
   }
 
-  // if (manualCalibrationFlag == true) {
-
-  //   // ALL AT ONCE
-  //   for (int i = 0; i < NUM_OSCILLATORS; i++) {
-  //     uint8_t pioNumber = VOICE_TO_PIO[i];
-  //     PIO pioN = pio[VOICE_TO_PIO[i]];
-  //     uint8_t sm1N = VOICE_TO_SM[i];
-
-  //     register uint32_t clk_div1 = (int)((float)(eightSysClock_Hz + pioPulseLengthTimesEight - eightPioPulseLength * freq) / freq);
-
-  //     if (freq == 0)
-  //       clk_div1 = 0;
-
-  //     pio_sm_put(pioN, sm1N, clk_div1);
-
-  //     pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-
-  //     uint16_t chanLevelManualCalibration = (uint16_t)initManualAmpCompCalibrationVal[i];
-  //     pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), chanLevelManualCalibration);
-
-  //     pwm_set_chan_level(PW_PWM_SLICES[i / 2], pwm_gpio_to_channel(PW_PINS[i / 2]), 0);
-
-  //   }
-  //
   if (manualCalibrationFlag == true) {  // One Ocillator at a time to get correct gap
 
     int8_t currentCalibrationOscillator = manualCalibrationStage / 2;
@@ -1107,7 +1030,7 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
         pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
         pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
       } else {
-        register uint32_t clk_div1 = (int)((float)(eightSysClock_Hz_u + pioPulseLengthTimesEight - eightPioPulseLength * freq) / freq);
+        register uint32_t clk_div1 = (uint32_t)(((float)sysClock_Hz / freq) - pioPulseLength) / NUM_OSR_CHUNKS;
 
         if (freq == 0)
           clk_div1 = 0;
@@ -1143,13 +1066,13 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
         break;
       case 1:
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), calibrationValue);
-        pio_sm_exec(pioN, sm1N, pio_encode_jmp(11 + offset[pioNumber]));
+        pio_sm_exec(pioN, sm1N, pio_encode_jmp(10 + offset[pioNumber]));
         break;
       case 2:
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), chanLevel);
         break;
       case 3:
-        chanLevel = get_chan_level_lookup_float((int32_t)(freq * 100), currentDCO);
+        chanLevel = get_chan_level_lookup_float(freq, currentDCO);
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), chanLevel);
       case 4:
         pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), calibrationValue);
@@ -1200,12 +1123,12 @@ void voice_task_debug() {
       uint8_t sm1N = VOICE_TO_SM[DCO_A];
       uint8_t sm2N = VOICE_TO_SM[DCO_B];
 
-      register uint32_t clk_div1 = (uint32_t)(((float)eightSysClock_Hz_u / freq) - eightPioPulseLength - 1);
+      register uint32_t clk_div1 = (uint32_t)(((float)sysClock_Hz / freq) - pioPulseLength - 1) / NUM_OSR_CHUNKS;
 
       if (freq == 0)
         clk_div1 = 0;
 
-      register uint32_t clk_div2 = (uint32_t)(((float)eightSysClock_Hz_u / freq2) - eightPioPulseLength - 1);
+      register uint32_t clk_div2 = (uint32_t)(((float)sysClock_Hz / freq2) - pioPulseLength - 1) / NUM_OSR_CHUNKS;
 
       uint16_t chanLevel = get_chan_level_lookup_float((int32_t)(freq * 100), (i * 2));
       uint16_t chanLevel2 = get_chan_level_lookup_float((int32_t)(freq2 * 100), (i * 2) + 1);
@@ -1483,72 +1406,53 @@ void print_voice_task_timings() {
 }
 #endif
 
-
-
-inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
-  static int lastSegIdx[NUM_OSCILLATORS] = { 0 };
-  // If frequency is at/above max comp band, drive full-scale level
-  if (x >= AMP_COMP_MAX_HZ_Q) {
-    return (uint16_t)DIV_COUNTER;
-  }
-  // Clamp bounds
-  if (x <= ampCompFrequencyArray[voiceN][0]) return ampCompArray[voiceN][0];
-  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize]) return ampCompArray[voiceN][ampCompTableSize];
-
-  // Use cached window first
-  int i = lastSegIdx[voiceN];
-  if (i < 0) i = 0;
-  if (i > ampCompTableSize - 2) i = ampCompTableSize - 2;
-  if (ampCompFrequencyArray[voiceN][i] <= x && x <= ampCompFrequencyArray[voiceN][i + 2]) {
-    // ok
-  } else if ((i + 1) <= (ampCompTableSize - 2) && ampCompFrequencyArray[voiceN][i + 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 3]) {
-    i = i + 1;
-  } else if ((i - 1) >= 0 && ampCompFrequencyArray[voiceN][i - 1] <= x && x <= ampCompFrequencyArray[voiceN][i + 1]) {
-    i = i - 1;
-  } else {
-    // Short linear scan (rare)
-    for (int k = 0; k < ampCompTableSize - 1; k++) {
-      if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
-        i = k;
-        break;
-      }
+static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
+  int window = 0;
+  for (int k = 0; k < ampCompTableSize - 2; ++k) {
+    if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
+      window = k;
+      break;
     }
   }
-  lastSegIdx[voiceN] = i;
+  if (window < 0) window = 0;
+  if (window > ampCompTableSize - 3) window = ampCompTableSize - 3;
 
-  // Fixed-point eval in window i..i+2
-  int32_t x0 = xBaseWIN[voiceN][i];
-  int32_t dx02 = dxWIN[voiceN][i];
-  // Instrument high window data for voice 0 (diff handler calls amp_comp_debug_window)
-  const uint16_t y1_top = ampCompArray[voiceN][i + 1];
-  const uint16_t y2_top = ampCompArray[voiceN][i + 2];
-  const int32_t x1 = ampCompFrequencyArray[voiceN][i + 1];
-  if ((y1_top >= DIV_COUNTER && y2_top >= DIV_COUNTER) && x >= x1) {
-    return (uint16_t)DIV_COUNTER;
-  }
-  const uint16_t y0 = ampCompArray[voiceN][i];
-  int32_t dx = x - x0;
-  if (dx < 0) dx = 0;
-  if (dx > dx02) dx = dx02;
-  // Q28 reciprocal path: t_q = round((dx / dx02) * 2^T_FRAC)
-  // invDxWIN_q28 = round(2^28 / dx02) precomputed per window
-  const uint32_t invDx_q28 = invDxWIN_q28[voiceN][i];
-  uint32_t t_q = (uint32_t)(((uint64_t)(uint32_t)dx * (uint64_t)invDx_q28) >> (28 - T_FRAC));
-  if (t_q > (uint32_t)(1u << T_FRAC)) t_q = (uint32_t)(1u << T_FRAC);
+  int32_t x0 = ampCompFrequencyArray[voiceN][window];
+  int32_t x1 = ampCompFrequencyArray[voiceN][window + 1];
+  int32_t x2 = ampCompFrequencyArray[voiceN][window + 2];
+  uint16_t y0 = ampCompArray[voiceN][window];
+  uint16_t y1 = ampCompArray[voiceN][window + 1];
+  uint16_t y2 = ampCompArray[voiceN][window + 2];
+  bool useDouble = useDoubleWindow[voiceN][window];
+  double aD = aCoeffD[voiceN][window];
+  double bD = bCoeffD[voiceN][window];
+  double cD = cCoeffD[voiceN][window];
 
-  // 32-bit polynomial using aQ/bQ (Q(T_FRAC)) and t in Q(T_FRAC):
-  int64_t aQ = (int64_t)aQWIN[voiceN][i];
-  int64_t bQ = (int64_t)bQWIN[voiceN][i];
-  int32_t cQ = (int32_t)cQWIN[voiceN][i];
-  // Fast Q(T_FRAC) polynomial: compute t2 once, do one rounding at the end
-  uint32_t t2 = (uint32_t)(((uint64_t)t_q * (uint64_t)t_q) >> T_FRAC);       // Q(T_FRAC)
-  int32_t quadQ = (int32_t)(((aQ * (int64_t)t2) >> T_FRAC));                 // Q(T_FRAC)
-  int32_t linQ = (int32_t)(((bQ * (int64_t)t_q) >> T_FRAC));                 // Q(T_FRAC)
-  int32_t yQ = quadQ + linQ + (cQ << T_FRAC);                                // Q(T_FRAC)
-  int32_t y = (int32_t)((((int64_t)yQ) + (1LL << (T_FRAC - 1))) >> T_FRAC);  // Q0
-  if (y < 0) y = 0;
-  if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
-  return (uint16_t)y;
+  Serial.print("[AMPWINDBG] v=");
+  Serial.print(voiceN);
+  Serial.print(" win=");
+  Serial.print(window);
+  Serial.print(" useDouble=");
+  Serial.print(useDouble ? "1" : "0");
+  Serial.print(" x0=");
+  Serial.print(x0);
+  Serial.print(" x1=");
+  Serial.print(x1);
+  Serial.print(" x2=");
+  Serial.print(x2);
+  Serial.print(" y0=");
+  Serial.print(y0);
+  Serial.print(" y1=");
+  Serial.print(y1);
+  Serial.print(" y2=");
+  Serial.print(y2);
+  Serial.print(" aD=");
+  Serial.print(aD, 6);
+  Serial.print(" bD=");
+  Serial.print(bD, 6);
+  Serial.print(" cD=");
+  Serial.print(cD, 6);
+  Serial.println();
 }
 
 inline void voice_task_gold_reference() {

@@ -13,7 +13,8 @@
 #define PITCH_INTERP_USE_Q12
 #define PITCH_USE_RATIO_Q16 1
 
-// Select clock-divider precision mode: 0 = fast 32-bit fixed-point, 1 = high-precision float
+// Select clock-divider precision mode: 0 = fast 32-bit fixed-point, 1 = high-precision 64bit integer division
+// High precision is preferred for better accuracy at low frequencies, but it is much slower.
 #define HIGH_PRECISION_CLKDIV 1
 
 #include <Adafruit_TinyUSB.h>
@@ -56,7 +57,14 @@
 
 // #include "irq_tuner.h"
 
+#ifdef RUNNING_AVERAGE
+RunningAverage ra_loop1_ADSR_and_detune(2000);
+RunningAverage ra_loop0_LFOs(2000);
+RunningAverage ra_loop0_DRIFT_LFOs(2000);
+RunningAverage ra_loop0_MIDI_and_serial(2000);
+RunningAverage ra_loop0_memcpy(2000);
 
+#endif
 
 // ****************************************************************************************** //
 
@@ -124,18 +132,38 @@ void loop() {
   MIDI_SERIAL.read();
   serial_STM32_task();
 
+#ifdef RUNNING_AVERAGE
+ra_loop0_MIDI_and_serial.addValue((float)(micros() - loop0_micros));
+#endif
+
   if ((loop0_micros - loop0_microsLast) > 100) {
-
+#ifdef RUNNING_AVERAGE
+    unsigned long t_loop0_LFOs = micros();
+#endif
     LFO1();
-    LFO2();
-    DRIFT_LFOs();
 
+    LFO2();
+
+    #ifdef RUNNING_AVERAGE
+    ra_loop0_LFOs.addValue((float)(micros() - t_loop0_LFOs));
+    unsigned long t_loop0_DRIFT_LFOs = micros();
+#endif
+
+    DRIFT_LFOs();
+    #ifdef RUNNING_AVERAGE
+    ra_loop0_DRIFT_LFOs.addValue((float)(micros() - t_loop0_DRIFT_LFOs));
+    unsigned long t_loop0_memcpy = micros();
+#endif
 
     // uint32_t a = micros();
     uint32_t fbits = 0;
     memcpy(&fbits, &DETUNE_INTERNAL, sizeof fbits);
 
     rp2040.fifo.push_nb(fbits);
+
+#ifdef RUNNING_AVERAGE
+    ra_loop0_memcpy.addValue((float)(micros() - t_loop0_memcpy));
+#endif
 
     loop0_microsLast = loop0_micros;
     // Serial.println((String)"a" + (micros() - a));
@@ -165,16 +193,19 @@ void loop1() {
     }
   } else {
 
-
     loop1_micros = micros();
 
     if ((loop1_micros - loop1_microsLast) > 100) {
-
+#ifdef RUNNING_AVERAGE
+      unsigned long t_loop1_ADSR_and_detune = micros();
+#endif
       ADSR_update();
       rp2040.fifo.pop_nb(detune_fifo_variable);
       memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);
       DETUNE_INTERNAL_FIFO_q24 = (int32_t)(DETUNE_INTERNAL_FIFO_float * (float)(1 << 24));
-
+#ifdef RUNNING_AVERAGE
+      ra_loop1_ADSR_and_detune.addValue((float)(micros() - t_loop1_ADSR_and_detune));
+#endif
       loop1_microsLast = loop1_micros;
     }
 
