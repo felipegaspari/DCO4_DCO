@@ -96,6 +96,10 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
         }
         break;
       }
+    case 19:
+      // Portamento mode: 0 = fixed-time glide, 1 = analog-style slew-rate
+      portamento_mode = (paramValue == 0) ? PORTA_MODE_TIME : PORTA_MODE_SLEW;
+      break;
     case 25:
       // = paramValue " CALIBRATION VAL";
       break;

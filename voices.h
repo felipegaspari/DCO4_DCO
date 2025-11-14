@@ -14,6 +14,14 @@ uint32_t portamentoStartMicros[NUM_VOICES_TOTAL];
 bool portamento = true;
 uint32_t portamento_time = 0;
 
+// Portamento mode: 0 = fixed-time glide (current behaviour),
+//                  1 = analog-style slew-rate (time scales with interval).
+enum PortamentoMode : uint8_t {
+  PORTA_MODE_TIME = 0,
+  PORTA_MODE_SLEW = 1
+};
+uint8_t portamento_mode = PORTA_MODE_SLEW;
+
 // Portamento state in Q24 (Hz * 2^24)
 int64_t portamento_start_q24[NUM_VOICES_TOTAL * 2];
 int64_t portamento_stop_q24[NUM_VOICES_TOTAL * 2];
