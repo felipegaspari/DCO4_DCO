@@ -42,6 +42,12 @@ inline void voice_task() {
   unsigned long voice_task_start_time = micros();
 #endif
 
+  // Track portamento-time changes between calls so we can smoothly
+  // retime the glide without introducing pitch discontinuities.
+  static uint32_t last_portamento_time = 0;
+  uint32_t portaTime = portamento_time;
+  bool portaTimeChanged = (portaTime != last_portamento_time);
+
   // Pre-calculate pitch bend as a Q24 value. This is done once per voice_task call.
   int32_t calcPitchbend_q24;
 
@@ -116,7 +122,7 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_portamento = micros();
 #endif
-      if (portamento_time > 0 /*&& portamento_start != 0 && portamento_stop != 0*/) {
+      if (portaTime > 0 /*&& portamento_start != 0 && portamento_stop != 0*/) {
         uint32_t now_us = micros();
         portamentoTimer[i] = now_us - portamentoStartMicros[i];
 
@@ -139,7 +145,7 @@ inline void voice_task() {
           portamento_cur_freq_q24[DCO_B] = startB_q24;
 
           // Per-microsecond step in Q24 with symmetric rounding (computed once per glide)
-          int32_t T = (portamento_time == 0) ? 1 : (int32_t)portamento_time;
+          int32_t T = (portaTime == 0) ? 1 : (int32_t)portaTime;
           int64_t dA = portamento_stop_q24[DCO_A] - portamento_start_q24[DCO_A];
           int64_t dB = portamento_stop_q24[DCO_B] - portamento_start_q24[DCO_B];
           int64_t halfT = (int64_t)T >> 1;
@@ -149,21 +155,50 @@ inline void voice_task() {
           freqPortaStep_q24[DCO_B] = (numB / (int64_t)T);
         }
 
-        if (portamentoTimer[i] > portamento_time) {
-          // Snap to target
-          portamento_cur_freq_q24[DCO_A] = portamento_stop_q24[DCO_A];
-          portamento_cur_freq_q24[DCO_B] = portamento_stop_q24[DCO_B];
-          portamento_start_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
-          portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
-          portamento_stop_q24[DCO_A] = portamento_cur_freq_q24[DCO_A];
-          portamento_stop_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
+        // Compute current glide position using existing timing/slope
+        int32_t elapsed_us = (int32_t)portamentoTimer[i];
+        int64_t curA;
+        int64_t curB;
+
+        if ((uint32_t)elapsed_us > portaTime) {
+          // Snap to target once we have exceeded the (current) portamento time
+          curA = portamento_stop_q24[DCO_A];
+          curB = portamento_stop_q24[DCO_B];
         } else {
           // Absolute-time base in Q24
-          int32_t elapsed_us = (int32_t)portamentoTimer[i];
-          int64_t curA = portamento_start_q24[DCO_A] + freqPortaStep_q24[DCO_A] * (int64_t)elapsed_us;
-          int64_t curB = portamento_start_q24[DCO_B] + freqPortaStep_q24[DCO_B] * (int64_t)elapsed_us;
-          portamento_cur_freq_q24[DCO_A] = curA;
-          portamento_cur_freq_q24[DCO_B] = curB;
+          curA = portamento_start_q24[DCO_A] + freqPortaStep_q24[DCO_A] * (int64_t)elapsed_us;
+          curB = portamento_start_q24[DCO_B] + freqPortaStep_q24[DCO_B] * (int64_t)elapsed_us;
+        }
+
+        portamento_cur_freq_q24[DCO_A] = curA;
+        portamento_cur_freq_q24[DCO_B] = curB;
+
+        // If the portamento time control changed while gliding, retime the glide
+        // from the *current* frequency so there is no pitch jump, only a change
+        // in glide speed (analog-style behaviour).
+        if (portaTimeChanged) {
+          int64_t targetA = sNotePitches_q24[note1];
+          int64_t targetB = sNotePitches_q24[note2];
+
+          // Only retime if we are actually in transit towards the target
+          if (curA != targetA || curB != targetB) {
+            portamento_start_q24[DCO_A] = curA;
+            portamento_start_q24[DCO_B] = curB;
+            portamento_stop_q24[DCO_A] = targetA;
+            portamento_stop_q24[DCO_B] = targetB;
+
+            portamentoStartMicros[i] = now_us;
+            portamentoTimer[i] = 0;
+
+            int32_t T = (portaTime == 0) ? 1 : (int32_t)portaTime;
+            int64_t dA = portamento_stop_q24[DCO_A] - portamento_start_q24[DCO_A];
+            int64_t dB = portamento_stop_q24[DCO_B] - portamento_start_q24[DCO_B];
+            int64_t halfT = (int64_t)T >> 1;
+            int64_t numA = (dA >= 0) ? (dA + halfT) : (dA - halfT);
+            int64_t numB = (dB >= 0) ? (dB + halfT) : (dB - halfT);
+            freqPortaStep_q24[DCO_A] = (numA / (int64_t)T);
+            freqPortaStep_q24[DCO_B] = (numB / (int64_t)T);
+          }
         }
       } else {
         portamento_cur_freq_q24[DCO_A] = sNotePitches_q24[note1];
@@ -537,6 +572,9 @@ inline void voice_task() {
     voice_task_max_time = voice_task_duration;
   }
 #endif
+
+  // Update cached portamento time for next call
+  last_portamento_time = portaTime;
 }
 
 inline void voice_task_simple() {

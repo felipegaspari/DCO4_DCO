@@ -5,7 +5,6 @@
 
 /*  *** TO DO ***
 - Fix PULSE PWN not received or updated when loading patches.
-- Fix portament not working properly when updating the portamento value.
 - Ask the AI to optimize and clean the autotune code. 
 */
 
