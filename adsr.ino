@@ -19,17 +19,18 @@ inline void ADSR_update() {
   tADSR = millis();
   for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     if (noteEnd[i] == 1) {
-      ADSRVoices[i].adsr1_voice.noteOff(tADSR - 1);
+      // With internal timing, ADSR handles timestamps itself
+      ADSRVoices[i].adsr1_voice.noteOff();
       noteEnd[i] = 0;
     } else if (noteStart[i] == 1) {
-      ADSRVoices[i].adsr1_voice.noteOff(tADSR - 1);
+      ADSRVoices[i].adsr1_voice.noteOff();
       ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);
       ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);
       ADSRVoices[i].adsr1_voice.setRelease(ADSR1_release);
-      ADSRVoices[i].adsr1_voice.noteOn(tADSR);
+      ADSRVoices[i].adsr1_voice.noteOn();
       noteStart[i] = 0;
     }
-    ADSR1Level[i] = ADSRVoices[i].adsr1_voice.getWave(tADSR);
+    ADSR1Level[i] = ADSRVoices[i].adsr1_voice.getWave();
   }
   ADSR_set_parameters();
 }

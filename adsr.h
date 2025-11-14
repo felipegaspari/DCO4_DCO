@@ -25,7 +25,7 @@ int _curve6_table[ARRAY_SIZE];
 int _curve7_table[ARRAY_SIZE];
 int *_curve_tables[8] = { _curve0_table, _curve1_table, _curve2_table, _curve3_table, _curve4_table, _curve5_table, _curve6_table, _curve7_table };
 
-#include "src/ADSR_Bezier_millis/ADSR_Bezier_millis.h"
+#include "src/ADSR_Bezier/ADSR_Bezier.h"
 
 Point bezierCubic(const Point& A, const Point& P1, const Point& P2, const Point& B, float t) {
   float one_minus_t = 1.0f - t;
