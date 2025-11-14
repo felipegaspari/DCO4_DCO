@@ -1,6 +1,7 @@
 void init_ADSR() {
   
-  adsrCreateTables(ADSR_1_CC, ARRAY_SIZE);
+  // Initialize ADSR Bézier lookup tables via library helper
+  adsrBezierInitTables(ADSR_1_CC, ARRAY_SIZE, _curve_tables);
 
     for (int i = 0; i < LIN_TO_EXP_TABLE_SIZE; i++) {
     linToLogLookup[i] = linearToLogarithmic(i, 10, maxADSRControlValue);
