@@ -1,8 +1,7 @@
 #include "include_all.h"
 
-#define COMPARE_CLK_DIV 0
 // Enable/disable detailed DCO debug report (including OSC1 frequency stages)
-#define DCO_DEBUG_REPORT 1
+#define DCO_DEBUG_REPORT 0
 
 static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   int window = 0;
@@ -395,24 +394,44 @@ inline void voice_task() {
       uint8_t arbitrary_measured_correction_value = 0; // 60 is a measured correction for the PIO
       
       uint32_t phaseDelay = 0;
+
+      uint32_t total_cycles1, total_cycles2;
+
+#if HIGH_PRECISION_CLKDIV
+      // High-precision path: use full Q24 frequency with 64-bit intermediate divide.
+      if (freq_q24_A > 0) {
+        uint64_t num1 = ((uint64_t)sysClock_Hz << 24) + (uint64_t)(freq_q24_A / 2);
+        total_cycles1 = (uint32_t)(num1 / (uint64_t)freq_q24_A);
+      } else {
+        total_cycles1 = 0;
+      }
+
+      if (freq_q24_B > 0) {
+        uint64_t num2 = ((uint64_t)sysClock_Hz << 24) + (uint64_t)(freq_q24_B / 2);
+        total_cycles2 = (uint32_t)(num2 / (uint64_t)freq_q24_B);
+      } else {
+        total_cycles2 = 0;
+      }
+#else
       // --- Oscillator 1: Fixed-point Calculation (no float / 64-bit divide) ---
       // freqA_Q4 represents Hz * 2^4, so multiply sysClock_Hz by 2^4 and divide.
-      uint32_t total_cycles1 = (sysClock_Hz * 16u + (freqA_Q4 / 2u)) / freqA_Q4;  // rounded
-
-      uint32_t total_osr_val1 = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES + arbitrary_measured_correction_value;  
-
-      clk_div1 = total_osr_val1 / NUM_OSR_CHUNKS;
+      total_cycles1 = (sysClock_Hz * 16u + (freqA_Q4 / 2u)) / freqA_Q4;  // rounded
 
       // --- Oscillator 2: Fixed-point Calculation (no float / 64-bit divide) ---
-      uint32_t total_cycles2 = (sysClock_Hz * 16u + (freqB_Q4 / 2u)) / freqB_Q4;  // rounded
+      total_cycles2 = (sysClock_Hz * 16u + (freqB_Q4 / 2u)) / freqB_Q4;  // rounded
+#endif
 
-      // 1. Calculate the dynamic phase and high period on EVERY call. This ensures
-      //    our math reflects the parameters for the current moment, even if they
-      //    are only sent to the hardware during note-on.
-      if (oscSync > 1) {
-        // Compute cycles-per-degree first to avoid overflow: round(total_cycles2 / 360)
-        uint32_t cycles_per_degree = (total_cycles2 + 180u) / 360u;
-        phaseDelay = cycles_per_degree * (uint32_t)phaseAlignOSC2;
+      // Use rounded division when computing clk_div to minimise bias.
+      uint32_t total_osr_val1 = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES + arbitrary_measured_correction_value;  
+      clk_div1 = (total_osr_val1 + (NUM_OSR_CHUNKS / 2u)) / NUM_OSR_CHUNKS;
+
+      // 1. Calculate the dynamic phase and high period on EVERY call.
+      //    Use a single high-precision multiply/divide to avoid compounding
+      //    rounding error from per-degree quantisation.
+      if (oscSync > 1 && phaseAlignOSC2 != 0) {
+        // phaseDelay ~= total_cycles2 * phaseAlignOSC2 / 360
+        uint64_t phase_num = (uint64_t)total_cycles2 * (uint64_t)phaseAlignOSC2;
+        phaseDelay = (uint32_t)((phase_num + 180u) / 360u);
       } else {
         phaseDelay = 0;
       }
@@ -422,24 +441,7 @@ inline void voice_task() {
       // 2. Calculate the low period using the CORRECT, potentially phase-delayed high period.
       //    This is the critical fix.
       uint32_t total_osr_val2 = total_cycles2 - high_total_cycles2 - T_LOW_OVERHEAD_CYCLES + arbitrary_measured_correction_value;
-      clk_div2 = total_osr_val2 / NUM_OSR_CHUNKS;
-
-#if COMPARE_CLK_DIV
-      if (i == 0) {  // Only print for the first voice to avoid spam
-        uint32_t clk_div_float = calculate_clk_div_float(freq_q24_A, true);
-        int32_t diff = clk_div1 - clk_div_float;
-        if (diff != 0) {
-          Serial.print("[CLKDIV] f_q24=");
-          Serial.print((long)freq_q24_A);
-          Serial.print(" fast=");
-          Serial.print(clk_div1);
-          Serial.print(" float=");
-          Serial.print(clk_div_float);
-          Serial.print(" diff=");
-          Serial.println(diff);
-        }
-      }
-#endif
+      clk_div2 = (total_osr_val2 + (NUM_OSR_CHUNKS / 2u)) / NUM_OSR_CHUNKS;
 
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
@@ -1547,25 +1549,6 @@ inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
   if (y < 0) y = 0;
   if (y > (int32_t)DIV_COUNTER) y = DIV_COUNTER;
   return (uint16_t)y;
-}
-
-// High-precision float reference calculation for clock dividers.
-static inline uint32_t calculate_clk_div_float(int64_t freq_q24, bool use_eight_sys_clock) {
-  if (freq_q24 <= 0) {
-    return 0;
-  }
-
-  long double freq_ld = (long double)freq_q24 / (long double)(1 << 24);
-  long double clock_ld = use_eight_sys_clock ? (long double)eightSysClock_Hz_u : (long double)sysClock_Hz;
-
-  long double raw_div_ld = clock_ld / freq_ld;
-
-  uint32_t pulse_len = use_eight_sys_clock ? eightPioPulseLength : pioPulseLength;
-
-  if (raw_div_ld < pulse_len) {
-    return 0;
-  }
-  return (uint32_t)(raw_div_ld - pulse_len);
 }
 
 inline void voice_task_gold_reference() {

@@ -13,6 +13,9 @@
 #define PITCH_INTERP_USE_Q12
 #define PITCH_USE_RATIO_Q16 1
 
+// Select clock-divider precision mode: 0 = fast 32-bit fixed-point, 1 = high-precision float
+#define HIGH_PRECISION_CLKDIV 1
+
 #include <Adafruit_TinyUSB.h>
 #include <MIDI.h>
 //#include "tusb_config.h"

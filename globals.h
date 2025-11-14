@@ -129,6 +129,7 @@ PIO pio[2] = { pio0, pio1 };
 uint8_t midi_serial_status = 0;
 int midi_pitch_bend = 8192, last_midi_pitch_bend = 8192;
 uint8_t pitchBendRange = 2;
+
 // Precompute 1/12 in Q24 for fast multiplier calculation
 static constexpr int32_t RECIP_TWELVE_Q24 = (int32_t)((1.0f / 12.0f) * (float)(1 << 24));
 // Precompute 1/360 in Q24 for fast phaseDelay calculation (full 0–360° range)
