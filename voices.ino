@@ -233,7 +233,7 @@ inline void voice_task() {
       int64_t modifiersAll_q24 =
         (int64_t)detune_fifo_q24 + unisonMODIFIER_q24 + (int64_t)calcPitchbend_q24 + (int64_t)Q24_ONE_EPS;
       int64_t freqModifiers_q24 = ADSRModifierOSC1_q24 + DETUNE_DRIFT_OSC1_q24 + modifiersAll_q24;
-      int64_t freq2Modifiers_q24 = ADSRModifierOSC2_q24 + DETUNE_DRIFT_OSC2_q24 + modifiersAll_q24;
+      int64_t freq2Modifiers_q24 = ADSRModifierOSC2_q24 + DETUNE_DRIFT_OSC2_q24 + modifiersAll_q24 + (int64_t)DETUNE_INTERNAL2_q24;
 #ifdef RUNNING_AVERAGE
       ra_modifiers_combination.addValue((float)(micros() - t_modifiers));
       unsigned long t_freq_scaling_x = micros();

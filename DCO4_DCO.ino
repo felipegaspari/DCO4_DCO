@@ -3,7 +3,7 @@
 // #include <stdlib.h>
 // #include <math.h>
 
-#define RUNNING_AVERAGE
+// #define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"
@@ -198,14 +198,16 @@ void loop1() {
       unsigned long t_loop1_ADSR_and_detune = micros();
 #endif
       ADSR_update();
-      // Receive Q24 detune value from core 0; reinterpret raw bits back to signed.
-      rp2040.fifo.pop_nb(detune_fifo_variable);
-      DETUNE_INTERNAL_FIFO_q24 = (int32_t)DETUNE_INTERNAL_FIFO;
+
 #ifdef RUNNING_AVERAGE
       ra_loop1_ADSR_and_detune.addValue((float)(micros() - t_loop1_ADSR_and_detune));
 #endif
       loop1_microsLast = loop1_micros;
     }
+    
+          // Receive Q24 detune value from core 0; reinterpret raw bits back to signed.
+          rp2040.fifo.pop_nb(detune_fifo_variable);
+          DETUNE_INTERNAL_FIFO_q24 = (int32_t)DETUNE_INTERNAL_FIFO;
 
     // loop speed
     //  loop1_start_time = micros();
