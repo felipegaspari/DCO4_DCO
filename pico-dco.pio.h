@@ -163,7 +163,8 @@ static inline pio_sm_config frequency_sync_4_jumps_program_get_default_config(ui
 }
 
 void frequency_sync_4_jumps(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
-    pio_sm_config c = frequency_sync_program_get_default_config(offset);
+    // Use the 4-jump program's own default config so wrap range matches
+    pio_sm_config c = frequency_sync_4_jumps_program_get_default_config(offset);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
     sm_config_set_set_pins(&c, pin, 1);
     sm_config_set_sideset_pins(&c, pin2); 

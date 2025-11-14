@@ -30,8 +30,8 @@ static constexpr uint32_t eightPioPulseLength = pioPulseLength / 8;
 
 // --- PIO Program Timing Constants ---
 static constexpr uint32_t T_HIGH_OVERHEAD_CYCLES = 2;
-static constexpr uint32_t T_LOW_OVERHEAD_CYCLES = 9;
-static constexpr uint32_t NUM_OSR_CHUNKS = 8;
+static constexpr uint32_t T_LOW_OVERHEAD_CYCLES = 5;
+static constexpr uint32_t NUM_OSR_CHUNKS = 4;
 
 // --- DERIVED CONSTANTS (Pre-calculated at compile time ) ---
 // The total, real duration of the high pulse in cycles.

@@ -392,7 +392,7 @@ inline void voice_task() {
       // OSC1 fixed-point equivalent of:
       //   total_cycles1   = sysClock_Hz / freq;
       //   total_osr_val1  = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div1        = total_osr_val1 >> 3;   // / NUM_OSR_CHUNKS (8)
+      //   clk_div1        = total_osr_val1 / NUM_OSR_CHUNKS;  // NUM_OSR_CHUNKS = 4
       register uint32_t clk_div1 = 0;
 
       // Convert Q24 frequency to Q20 and approximate 1/f in Q20 with a single 32-bit division.
@@ -411,11 +411,11 @@ inline void voice_task() {
 
       // Direct fixed-point equivalent of:
       //   total_osr_val1 = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div1       = total_osr_val1 >> 3;
+      //   clk_div1       = total_osr_val1 / NUM_OSR_CHUNKS;
       uint32_t total_osr_val1 =
         total_cycles1 - (T_HIGH_TOTAL_CYCLES + T_LOW_OVERHEAD_CYCLES);
-      // Divide by 8 with rounding to nearest
-      clk_div1 = (total_osr_val1 + 4U) >> 3;
+      // Divide by NUM_OSR_CHUNKS (4) with rounding to nearest
+      clk_div1 = (total_osr_val1 + (NUM_OSR_CHUNKS / 2)) / NUM_OSR_CHUNKS;
 
 #if COMPARE_CLK_DIV
       if (i == 0) {  // Only print for the first voice to avoid spam
@@ -470,14 +470,14 @@ inline void voice_task() {
       uint32_t y_val2 = pioPulseLength + phaseDelay;
       uint32_t high_total_cycles2 = y_val2 + T_HIGH_OVERHEAD_CYCLES;
 
-      // 4) Remaining low portion with low-period overhead, split into 8 OSR chunks.
+      // 4) Remaining low portion with low-period overhead, split into NUM_OSR_CHUNKS OSR chunks.
       // Fixed-point equivalent of:
       //   total_osr_val2 = total_cycles2 - high_total_cycles2 - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div2       = total_osr_val2 >> 3;
+      //   clk_div2       = total_osr_val2 / NUM_OSR_CHUNKS;
       uint32_t total_osr_val2 =
         total_cycles2 - (high_total_cycles2 + T_LOW_OVERHEAD_CYCLES);
-      // Divide by 8 with rounding to nearest
-      clk_div2 = (total_osr_val2 + 4U) >> 3;  // / NUM_OSR_CHUNKS (8)
+      // Divide by NUM_OSR_CHUNKS (4) with rounding to nearest
+      clk_div2 = (total_osr_val2 + (NUM_OSR_CHUNKS / 2)) / NUM_OSR_CHUNKS;
 
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
@@ -567,8 +567,8 @@ inline void voice_task() {
 #endif
 
         if (oscSync == 1) {
-          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
-          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(6 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(6 + offset[pioNumberB]));
         }
 
         if (oscSync > 1) {
@@ -588,8 +588,8 @@ inline void voice_task() {
           pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, true));
           pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, true));
 
-          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(18 + offset[pioNumberA]));  // OSC Sync MODE
-          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(18 + offset[pioNumberB]));
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
 
 
           pio_set_sm_mask_enabled(pioN_A, sm_mask, true);
@@ -1486,59 +1486,6 @@ void print_voice_task_timings() {
 #endif
 
 
-// inline int32_t interpolatePitchMultiplier(int32_t x) {
-// #ifdef RUNNING_AVERAGE
-//   unsigned long t_interp = micros();
-// #endif
-//   // Check if x is out of bounds
-//   if (x <= xMultiplierTable[0]) {
-// #ifdef RUNNING_AVERAGE
-//     ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-// #endif
-//     return yMultiplierTable[0];
-//   }
-//   if (x >= xMultiplierTable[multiplierTableSize - 1]) {
-// #ifdef RUNNING_AVERAGE
-//     ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-// #endif
-//     return yMultiplierTable[multiplierTableSize - 1];
-//   }
-
-//   // Binary search to find the interval
-//   int low = 0;
-//   int high = multiplierTableSize - 1;
-//   while (low <= high) {
-//     int mid = (low + high) / 2;
-//     if (xMultiplierTable[mid] <= x && x < xMultiplierTable[mid + 1]) {
-//       low = mid;
-//       break;
-//     } else if (x < xMultiplierTable[mid]) {
-//       high = mid - 1;
-//     } else {
-//       low = mid + 1;
-//     }
-//   }
-
-//   // Perform linear interpolation using fixed-point arithmetic
-//   int32_t x0 = xMultiplierTable[low];
-//   int32_t x1 = xMultiplierTable[low + 1];
-//   int32_t y0 = yMultiplierTable[low];
-//   int32_t y1 = yMultiplierTable[low + 1];
-
-//   int32_t dx = x1 - x0;
-//   if (dx == 0) return y0;
-//   int32_t dy = y1 - y0;
-//   int32_t num = x - x0;
-//   // Use Q15 reciprocal to avoid division in hot path
-//   int32_t invQ15 = invDxQ15[low];
-//   int32_t frac_q15 = (int32_t)(((int64_t)num * (int64_t)invQ15) >> 15); // ~Q0 with fraction in Q15
-//   int32_t interp = (int32_t)(((int64_t)dy * (int64_t)frac_q15) >> 15);
-//   int32_t y = y0 + interp;
-// #ifdef RUNNING_AVERAGE
-//   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-// #endif
-//   return y;
-// }
 
 inline uint16_t get_chan_level_lookup(int32_t x, uint8_t voiceN) {
   static int lastSegIdx[NUM_OSCILLATORS] = { 0 };
