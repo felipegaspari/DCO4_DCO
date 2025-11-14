@@ -101,6 +101,45 @@ void frequency_sync(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
 }
 %}
 
+
+.program frequency_sync_4_jumps
+.side_set 1 opt
+.wrap_target
+lp0:
+    jmp x-- lp0
+    mov x, OSR
+    set pins, 0     side 0
+lp1:
+jmp x-- lp1
+pull_1:
+    mov x, OSR
+lp2:
+jmp x-- lp2
+pull_2:
+    mov x, OSR
+lp3:
+jmp x-- lp3
+pull_3:
+    mov x, OSR
+loop_final:
+    jmp x-- loop_final
+    mov x, y  
+    set pins, 1    side 1
+.wrap
+
+% c-sdk {
+void frequency_sync_4_jumps(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
+    pio_sm_config c = frequency_sync_program_get_default_config(offset);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_sideset_pins(&c, pin2); 
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin2);   
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
+
+
 .program frequency
 .side_set 1 opt
 .wrap_target

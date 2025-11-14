@@ -1,7 +1,7 @@
 void init_pio() {
 
-  offset[0] = pio_add_program(pio[0], &frequency_sync_program);
-  offset[1] = pio_add_program(pio[1], &frequency_sync_program);
+  offset[0] = pio_add_program(pio[0], &frequency_sync_4_jumps_program);
+  offset[1] = pio_add_program(pio[1], &frequency_sync_4_jumps_program);
   // offset[0] = pio_add_program(pio[0], &frequency_program);
   // offset[1] = pio_add_program(pio[1], &frequency_program);
   start_voice_sms();
@@ -48,7 +48,7 @@ void init_sm(PIO pio, uint sm, uint offset, uint pin) {
 }
 
 void init_sm_sync(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
-  frequency_sync(pio, sm, offset, pin, pin2);
+  frequency_sync_4_jumps(pio, sm, offset, pin, pin2);
   pio_sm_set_enabled(pio, sm, true);
 }
 

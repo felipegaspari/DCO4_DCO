@@ -124,6 +124,56 @@ void frequency_sync(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
 
 #endif
 
+// ---------------------- //
+// frequency_sync_4_jumps //
+// ---------------------- //
+
+#define frequency_sync_4_jumps_wrap_target 0
+#define frequency_sync_4_jumps_wrap 11
+
+static const uint16_t frequency_sync_4_jumps_program_instructions[] = {
+            //     .wrap_target
+    0x0040, //  0: jmp    x--, 0                     
+    0xa027, //  1: mov    x, osr                     
+    0xf000, //  2: set    pins, 0         side 0     
+    0x0043, //  3: jmp    x--, 3                     
+    0xa027, //  4: mov    x, osr                     
+    0x0045, //  5: jmp    x--, 5                     
+    0xa027, //  6: mov    x, osr                     
+    0x0047, //  7: jmp    x--, 7                     
+    0xa027, //  8: mov    x, osr                     
+    0x0049, //  9: jmp    x--, 9                     
+    0xa022, // 10: mov    x, y                       
+    0xf801, // 11: set    pins, 1         side 1     
+            //     .wrap
+};
+
+#if !PICO_NO_HARDWARE
+static const struct pio_program frequency_sync_4_jumps_program = {
+    .instructions = frequency_sync_4_jumps_program_instructions,
+    .length = 12,
+    .origin = -1,
+};
+
+static inline pio_sm_config frequency_sync_4_jumps_program_get_default_config(uint offset) {
+    pio_sm_config c = pio_get_default_sm_config();
+    sm_config_set_wrap(&c, offset + frequency_sync_4_jumps_wrap_target, offset + frequency_sync_4_jumps_wrap);
+    sm_config_set_sideset(&c, 2, true, false);
+    return c;
+}
+
+void frequency_sync_4_jumps(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
+    pio_sm_config c = frequency_sync_program_get_default_config(offset);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_sideset_pins(&c, pin2); 
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin2);   
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+#endif
+
 // ---------------- //
 // frequency_pulse1 //
 // ---------------- //
