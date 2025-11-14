@@ -1,6 +1,8 @@
 #include "include_all.h"
 
 #define COMPARE_CLK_DIV 0
+// Enable/disable detailed DCO debug report (including OSC1 frequency stages)
+#define DCO_DEBUG_REPORT 0
 
 static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   int window = 0;
@@ -60,8 +62,9 @@ RunningAverage ra_adsr_modifier(2000);
 RunningAverage ra_unison_modifier(2000);
 RunningAverage ra_drift_multiplier(2000);
 RunningAverage ra_modifiers_combination(2000);
-RunningAverage ra_freq_scaling(2000);
-RunningAverage ra_interpolate_pitch(2000);
+RunningAverage ra_freq_scaling_x(2000);
+RunningAverage ra_freq_scaling_ratio(2000);
+RunningAverage ra_freq_scaling_post(2000);
 RunningAverage ra_get_chan_level(2000);
 RunningAverage ra_pwm_calculations(2000);
 RunningAverage ra_voice_task_total(2000);
@@ -91,8 +94,9 @@ void init_voices() {
   ra_unison_modifier.clear();
   ra_drift_multiplier.clear();
   ra_modifiers_combination.clear();
-  ra_freq_scaling.clear();
-  ra_interpolate_pitch.clear();
+  ra_freq_scaling_x.clear();
+  ra_freq_scaling_ratio.clear();
+  ra_freq_scaling_post.clear();
   ra_get_chan_level.clear();
   ra_pwm_calculations.clear();
   ra_voice_task_total.clear();
@@ -129,6 +133,12 @@ inline void voice_task() {
   const int16_t local_LFO2toPW = LFO2toPW;
 
   for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+
+#if DCO_DEBUG_REPORT
+    // Debug: track OSC1 frequency at key stages of the pipeline for DCO report.
+    float dbg_freq_base_Hz = 0.0f;       // After portamento, before modifiers
+    float dbg_freq_after_mod_Hz = 0.0f;  // After all modifiers applied (freq_q24_A)
+#endif
 
     if (note_on_flag[i] == 1) {
       note_on_flag_flag[i] = true;
@@ -231,6 +241,11 @@ inline void voice_task() {
         portamento_start_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
         portamento_stop_q24[DCO_B] = portamento_cur_freq_q24[DCO_B];
       }
+
+#if DCO_DEBUG_REPORT
+      // Debug: OSC1 base frequency after portamento, before modifiers (in Hz)
+      dbg_freq_base_Hz = (float)portamento_cur_freq_q24[DCO_A] / (float)(1 << 24);
+#endif
 #ifdef RUNNING_AVERAGE
       ra_portamento.addValue((float)(micros() - t_portamento));
 #endif
@@ -273,8 +288,6 @@ inline void voice_task() {
       ra_drift_multiplier.addValue((float)(micros() - t_drift));
 #endif
 
-      /*   Este bloque tardaba 10 microsegundos */
-
 #ifdef RUNNING_AVERAGE
       unsigned long t_modifiers = micros();
 #endif
@@ -282,15 +295,18 @@ inline void voice_task() {
       int32_t detune_fifo_q24 = DETUNE_INTERNAL_FIFO_q24;
 
       // 1.00001f in Q24 (epsilon ≈ 168 LSBs)
-      // Use detune delta (DETUNE_INTERNAL_FIFO - 1.0) to avoid double baseline
-      int64_t detune_delta_q24 = (int64_t)detune_fifo_q24 - (int64_t)Q24_ONE;
-      int64_t modifiersAll_q24 = detune_delta_q24 + unisonMODIFIER_q24 + (int64_t)calcPitchbend_q24 + (int64_t)Q24_ONE_EPS;
+      // Fixed-point equivalent of:
+      //   modifiersAll = DETUNE_INTERNAL_FIFO_float + unisonMODIFIER + calcPitchbend + 1.00001f;
+      int64_t modifiersAll_q24 =
+        (int64_t)detune_fifo_q24 + unisonMODIFIER_q24 + (int64_t)calcPitchbend_q24 + (int64_t)Q24_ONE_EPS;
       int64_t freqModifiers_q24 = ADSRModifierOSC1_q24 + DETUNE_DRIFT_OSC1_q24 + modifiersAll_q24;
       int64_t freq2Modifiers_q24 = ADSRModifierOSC2_q24 + DETUNE_DRIFT_OSC2_q24 + modifiersAll_q24;
 #ifdef RUNNING_AVERAGE
       ra_modifiers_combination.addValue((float)(micros() - t_modifiers));
-      unsigned long t_freq_scaling = micros();
+      unsigned long t_freq_scaling_x = micros();
 #endif
+
+
 
       // Fast fixed-point equivalent of:
       //   freq  *= interpolatePitchMultiplier(freqModifiers)/multiplierTableScale;
@@ -301,9 +317,20 @@ inline void voice_task() {
       int64_t x2_q24s = (freq2Modifiers_q24 * (int64_t)multiplierTableScale);  // Q24 * int -> Q24
       int32_t xScaled1_Q16 = (x1_q24s >= 0) ? (int32_t)(x1_q24s >> 8) : (int32_t)(-((-x1_q24s) >> 8));
       int32_t xScaled2_Q16 = (x2_q24s >= 0) ? (int32_t)(x2_q24s >> 8) : (int32_t)(-((-x2_q24s) >> 8));
+
+#ifdef RUNNING_AVERAGE
+      ra_freq_scaling_x.addValue((float)(micros() - t_freq_scaling_x));
+      unsigned long t_freq_scaling_ratio = micros();
+#endif
+
 #if PITCH_USE_RATIO_Q16
       int32_t ratio1_Q16 = interpolateRatioQ16_cached(xScaled1_Q16, DCO_A);
       int32_t ratio2_Q16 = interpolateRatioQ16_cached(xScaled2_Q16, DCO_B);
+#ifdef RUNNING_AVERAGE
+      ra_freq_scaling_ratio.addValue((float)(micros() - t_freq_scaling_ratio));
+      unsigned long t_freq_scaling_post = micros();
+#endif
+
       freq_q24_A = (portamento_cur_freq_q24[DCO_A] * (int64_t)ratio1_Q16) >> 16;
       // Combine OSC2 ratio with detune into one Q16 factor
       // detune_Q16 = round(detune_q24 / 2^8)
@@ -312,6 +339,11 @@ inline void voice_task() {
       int32_t combined_Q16 = (int32_t)((((int64_t)ratio2_Q16 * (int64_t)detune_Q16) + (1LL << 15)) >> 16);
       freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16) >> 16;
 #else
+#ifdef RUNNING_AVERAGE
+      ra_freq_scaling_ratio.addValue((float)(micros() - t_freq_scaling_ratio));
+      unsigned long t_freq_scaling_post = micros();
+#endif
+
       int32_t yTab1 = interpolatePitchMultiplierIntQ16_cached(xScaled1_Q16, DCO_A);
       int32_t yTab2 = interpolatePitchMultiplierIntQ16_cached(xScaled2_Q16, DCO_B);
       // Convert yTab -> ratioQ16 using reciprocal-multiply (round((yTab<<16)/10000))
@@ -327,12 +359,17 @@ inline void voice_task() {
       freq_q24_B = (portamento_cur_freq_q24[DCO_B] * (int64_t)combined_Q16_fb) >> 16;
 #endif
 
+#if DCO_DEBUG_REPORT
+      // Debug: OSC1 frequency after all modifiers applied (in Hz)
+      dbg_freq_after_mod_Hz = (float)freq_q24_A / (float)(1 << 24);
+#endif
+
+
       // Per-cycle: no caching; compute dividers directly from current Q18 frequency
 
 #ifdef RUNNING_AVERAGE
-      ra_freq_scaling.addValue((float)(micros() - t_freq_scaling));
+      ra_freq_scaling_post.addValue((float)(micros() - t_freq_scaling_post));
 #endif
-
       // Convert from Q24 fixed-point to float for the simple divider calculation.
       float freq = (float)freq_q24_A / (float)(1 << 24);
       float freq2 = (float)freq_q24_B / (float)(1 << 24);
@@ -442,34 +479,17 @@ inline void voice_task() {
       // Divide by 8 with rounding to nearest
       clk_div2 = (total_osr_val2 + 4U) >> 3;  // / NUM_OSR_CHUNKS (8)
 
-#if COMPARE_CLK_DIV
-      if (i == 0) {  // Only print for the first voice to avoid spam
-        uint32_t clk_div_float = calculate_clk_div_float(freq_q24_B, (oscSync > 1) ? false : true);
-        int32_t diff = clk_div2 - clk_div_float;
-        if (diff != 0) {
-          Serial.print("[CLKDIV2] f_q24=");
-          Serial.print((long)freq_q24_B);
-          Serial.print(" fast=");
-          Serial.print(clk_div2);
-          Serial.print(" float=");
-          Serial.print(clk_div_float);
-          Serial.print(" diff=");
-          Serial.println(diff);
-        }
-      }
-#endif
-
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
 #endif
 
-      // voice_task_4_time = micros() - voice_task_start_time;
-
-      uint16_t chanLevel, chanLevel2;
 
 #ifdef RUNNING_AVERAGE
       unsigned long t_chan_level = micros();
 #endif
+
+      uint16_t chanLevel, chanLevel2;
+
       // Derive Q16 from Q24 for amp-comp, then to Hz*2^FREQ_FRAC_BITS (get_chan_level does not need higher precision)
       int32_t freq_q16_A = (int32_t)((freq_q24_A + (1LL << 7)) >> 8);
       int32_t freq_q16_B = (int32_t)((freq_q24_B + (1LL << 7)) >> 8);
@@ -496,36 +516,10 @@ inline void voice_task() {
       ra_get_chan_level.addValue((float)(micros() - t_chan_level));
 #endif
 
-      // Periodic accuracy check against float reference (every ~100 ms)
-
-      // if (i == 0) {
-      //   static unsigned long lastAmpDiffPrint = 0;
-      //   unsigned long now = micros();
-      //   if ((now - lastAmpDiffPrint) >= 100000) {
-      //     uint16_t y_fl_A = get_chan_level_lookup(freqFx_A, DCO_A);
-      //     float fHzA = (float)freqFx_A / (float)(1u << FREQ_FRAC_BITS);
-      //     int32_t diff = (int32_t)y_fl_A - (uint16_t)chanLevel;
-      //     Serial.print("[AMPDIFF] v0 fQ8="); Serial.print((int32_t)freqFx_A);
-      //     Serial.print(" fHz="); Serial.print(fHzA, 3);
-      //     Serial.print(" F_Referencia="); Serial.print(y_fl_A);
-      //     Serial.print(" F_Actual="); Serial.print(chanLevel);
-      //     Serial.print(" diff="); Serial.println(diff);
-      //     if (diff > 50 || diff < -50) {
-      //       amp_comp_debug_window(freqFx_A, DCO_A);
-      //     }
-      //     lastAmpDiffPrint = now;
-      //   }
-      // }
-
-
-      // VCO LEVEL //uint16_t vcoLevel = get_vco_level(freq);
-
       pio_sm_put(pioN_A, sm1N, clk_div1);
       pio_sm_put(pioN_B, sm2N, clk_div2);
       pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
       pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
-
-      // Serial.println("VOICE TASK 5a");
 
       if (note_on_flag_flag[i]) {
         // --- Reverse Calculation to find the expected output frequency ---
@@ -533,6 +527,7 @@ inline void voice_task() {
         uint32_t actual_total_period = T_HIGH_TOTAL_CYCLES + actual_total_osr_val + T_LOW_OVERHEAD_CYCLES;
         float expected_freq = (double)sysClock_Hz / (double)actual_total_period;
 
+#if DCO_DEBUG_REPORT
         // --- Print Diagnostic Report ---
         Serial.println("----------------[ DCO DEBUG REPORT ]----------------");
         Serial.printf("Target Freq In:   %.2f Hz\n", (float)freq_q24_A / (float)(1 << 24));
@@ -544,7 +539,32 @@ inline void voice_task() {
         Serial.println("---");
         Serial.printf("Actual Period Gen:  %lu cycles (High + (clk_div*8) + Low)\n", actual_total_period);
         Serial.printf("==> Expected Freq Out: %.2f Hz\n", expected_freq);
+        Serial.println("---");
+
+        Serial.println("OSC1 Frequency Stages:");
+        Serial.printf("  Base after portamento:     %.4f Hz\n", dbg_freq_base_Hz);
+        Serial.printf("  After modifiers (Q24):     %.4f Hz\n", dbg_freq_after_mod_Hz);
+        Serial.printf("  Quantized by PIO (clkdiv): %.4f Hz\n", expected_freq);
+        Serial.println("---");
+
+        Serial.println("OSC1 Modifier Breakdown (Q24/Q16):");
+        Serial.printf("  ADSRModifierOSC1_q24:      %.6f\n", (double)ADSRModifierOSC1_q24 / (double)(1 << 24));
+        Serial.printf("  DETUNE_DRIFT_OSC1_q24:     %.6f\n", (double)DETUNE_DRIFT_OSC1_q24 / (double)(1 << 24));
+        Serial.printf("  detune_fifo_q24:           %.6f\n", (double)detune_fifo_q24 / (double)(1 << 24));
+        Serial.printf("  unisonMODIFIER_q24:        %.6f\n", (double)unisonMODIFIER_q24 / (double)(1 << 24));
+        Serial.printf("  pitchbend_q24:             %.6f\n", (double)calcPitchbend_q24 / (double)(1 << 24));
+        Serial.printf("  Q24_ONE_EPS:               %.6f\n", (double)Q24_ONE_EPS / (double)(1 << 24));
+        Serial.printf("  modifiersAll_q24:          %.6f\n", (double)modifiersAll_q24 / (double)(1 << 24));
+        Serial.printf("  freqModifiers_q24:         %.6f\n", (double)freqModifiers_q24 / (double)(1 << 24));
+        Serial.println("---");
+
+        Serial.println("OSC1 Multiplier Table Inputs:");
+        Serial.printf("  x1_q24s (table-units*Q24): %.6f\n", (double)x1_q24s / (double)(1 << 24));
+        Serial.printf("  xScaled1_Q16:              %ld (int)\n", (long)xScaled1_Q16);
+        Serial.printf("  ratio1_Q16:                %.6f\n", (double)ratio1_Q16 / (double)(1 << 16));
         Serial.println("----------------------------------------------------\n");
+
+#endif
 
         if (oscSync == 1) {
           pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
@@ -1239,9 +1259,6 @@ void voice_task_debug() {
 
 // Cached variant: pass DCO index to reuse last segment and avoid binary search
 inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoIndex) {
-  // #ifdef RUNNING_AVERAGE
-  //   unsigned long t_interp = micros();
-  // #endif
   int32_t xInt = xQ16 >> 16;
   // Clamp to bounds using integer part
   if (xInt <= xMultiplierTable[0]) {
@@ -1299,16 +1316,11 @@ inline int32_t interpolatePitchMultiplierIntQ16_cached(int32_t xQ16, int dcoInde
   int32_t deltaQ16 = xQ16 - (x0 << 16);
   int32_t y = y0 + (int32_t)((((int64_t)deltaQ16 * (int64_t)slope) + (1LL << 35)) >> 36);
 #endif
-  // #ifdef RUNNING_AVERAGE
-  //   ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-  // #endif
   return y;
 }
+
 // Cached Q16 ratio interpolator: returns multiplier ratio in Q16 without divide
 inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
-#ifdef RUNNING_AVERAGE
-  unsigned long t_interp = micros();
-#endif
   int32_t xInt = xQ16 >> 16;
   // Clamp to bounds using integer part
   if (xInt <= xMultiplierTable[0]) {
@@ -1359,9 +1371,6 @@ inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
   // Convert y (table units) to ratio Q16 with rounding using reciprocal-multiply
   uint64_t num = ((uint64_t)(uint32_t)yTab << 16) + 5000u;  // scale/2
   int32_t ratioQ16 = (int32_t)((num * 0xD1B71759ULL) >> 45);
-#ifdef RUNNING_AVERAGE
-  ra_interpolate_pitch.addValue((float)(micros() - t_interp));
-#endif
   return ratioQ16;
 }
 void initMultiplierTables() {
@@ -1443,12 +1452,16 @@ void print_voice_task_timings() {
   if (ra_modifiers_combination.getCount() > 0) Serial.println(ra_modifiers_combination.getFastAverage(), 2);
   else Serial.println("N/A");
 
-  Serial.print("Freq Scaling:         ");
-  if (ra_freq_scaling.getCount() > 0) Serial.println(ra_freq_scaling.getFastAverage(), 2);
+  Serial.print("Freq Scaling x:       ");
+  if (ra_freq_scaling_x.getCount() > 0) Serial.println(ra_freq_scaling_x.getFastAverage(), 2);
   else Serial.println("N/A");
 
-  Serial.print("Interpolate Pitch:    ");
-  if (ra_interpolate_pitch.getCount() > 0) Serial.println(ra_interpolate_pitch.getFastAverage(), 2);
+  Serial.print("Freq Scaling ratio:   ");
+  if (ra_freq_scaling_ratio.getCount() > 0) Serial.println(ra_freq_scaling_ratio.getFastAverage(), 2);
+  else Serial.println("N/A");
+
+  Serial.print("Freq Scaling post:    ");
+  if (ra_freq_scaling_post.getCount() > 0) Serial.println(ra_freq_scaling_post.getFastAverage(), 2);
   else Serial.println("N/A");
 
   Serial.print("Get Chan Level:       ");
