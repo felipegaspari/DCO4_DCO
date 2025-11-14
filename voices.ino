@@ -536,14 +536,6 @@ inline void voice_task() {
   if (voice_task_duration > voice_task_max_time) {
     voice_task_max_time = voice_task_duration;
   }
-
-  // Print timing statistics periodically
-  unsigned long current_time = millis();
-  if (current_time - last_timing_print >= TIMING_PRINT_INTERVAL) {
-    print_voice_task_timings();
-
-    last_timing_print = current_time;
-  }
 #endif
 }
 

@@ -132,6 +132,8 @@ void loop() {
   MIDI_SERIAL.read();
   serial_STM32_task();
 
+  LFO1();
+
 #ifdef RUNNING_AVERAGE
 ra_loop0_MIDI_and_serial.addValue((float)(micros() - loop0_micros));
 #endif
@@ -140,7 +142,6 @@ ra_loop0_MIDI_and_serial.addValue((float)(micros() - loop0_micros));
 #ifdef RUNNING_AVERAGE
     unsigned long t_loop0_LFOs = micros();
 #endif
-    LFO1();
 
     LFO2();
 
@@ -155,11 +156,8 @@ ra_loop0_MIDI_and_serial.addValue((float)(micros() - loop0_micros));
     unsigned long t_loop0_memcpy = micros();
 #endif
 
-    // uint32_t a = micros();
-    uint32_t fbits = 0;
-    memcpy(&fbits, &DETUNE_INTERNAL, sizeof fbits);
-
-    rp2040.fifo.push_nb(fbits);
+    // Transfer LFO1 detune modulation as a raw Q24 fixed-point integer via FIFO.
+    rp2040.fifo.push_nb((uint32_t)DETUNE_INTERNAL_q24);
 
 #ifdef RUNNING_AVERAGE
     ra_loop0_memcpy.addValue((float)(micros() - t_loop0_memcpy));
@@ -200,9 +198,9 @@ void loop1() {
       unsigned long t_loop1_ADSR_and_detune = micros();
 #endif
       ADSR_update();
+      // Receive Q24 detune value from core 0; reinterpret raw bits back to signed.
       rp2040.fifo.pop_nb(detune_fifo_variable);
-      memcpy(&DETUNE_INTERNAL_FIFO_float, &DETUNE_INTERNAL_FIFO, sizeof DETUNE_INTERNAL_FIFO_float);
-      DETUNE_INTERNAL_FIFO_q24 = (int32_t)(DETUNE_INTERNAL_FIFO_float * (float)(1 << 24));
+      DETUNE_INTERNAL_FIFO_q24 = (int32_t)DETUNE_INTERNAL_FIFO;
 #ifdef RUNNING_AVERAGE
       ra_loop1_ADSR_and_detune.addValue((float)(micros() - t_loop1_ADSR_and_detune));
 #endif
@@ -224,4 +222,29 @@ void loop1() {
     //  }
     // Serial.println("loop1");
   }
+
+  #ifdef RUNNING_AVERAGE
+  if (timer1000msFlag) {
+    print_running_averages();
+  }
+  #endif
 }
+
+#ifdef RUNNING_AVERAGE
+void print_running_averages() {
+  Serial.println("--------------------------------");
+  Serial.println("RUNNING AVERAGES");
+  Serial.println("--------------------------------");
+  Serial.println("Loop0");
+  Serial.println((String) "Loop0 MIDI and Serial: " + ra_loop0_MIDI_and_serial.getFastAverage());
+  Serial.println((String) "Loop0 LFOs: " + ra_loop0_LFOs.getFastAverage());
+  Serial.println((String) "Loop0 DRIFT LFOs: " + ra_loop0_DRIFT_LFOs.getFastAverage());
+  Serial.println((String) "Loop0 memcpy: " + ra_loop0_memcpy.getFastAverage());
+  Serial.println("Loop1");
+  Serial.println((String) "Loop1 ADSR and Detune: " + ra_loop1_ADSR_and_detune.getFastAverage());
+
+
+
+  print_voice_task_timings();
+}
+#endif

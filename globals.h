@@ -67,12 +67,21 @@ uint8_t analogDriftSpread = 0;
 
 float DETUNE = 0.0f, LAST_DETUNE = 0.0f;
 float DETUNE2 = 1.00f;
-float DETUNE_INTERNAL = 1;
-volatile float DETUNE_INTERNAL2 = 1;
+
+// LFO1 detune modulation (previously float) is now stored as Q24 fixed-point.
+// This value represents the additive log-frequency modifier produced by LFO1.
+int32_t DETUNE_INTERNAL_q24 = 0;
+
+// LFO2 detune modulation for OSC2 only, in Q24 fixed-point.
+volatile int32_t DETUNE_INTERNAL2_q24 = 0;
+
+// Raw 32-bit container used to transfer DETUNE_INTERNAL_q24 between cores via FIFO.
 uint32_t DETUNE_INTERNAL_FIFO = 1;
-float DETUNE_INTERNAL_FIFO_float = 1;
 uint32_t* detune_fifo_variable = &DETUNE_INTERNAL_FIFO;
+
+// Detune value as received on core 1, in Q24 fixed-point.
 int32_t DETUNE_INTERNAL_FIFO_q24 = (1 << 24);
+
 float BASE_NOTE = 440.0f;
 
 

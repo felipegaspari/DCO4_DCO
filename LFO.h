@@ -1,10 +1,10 @@
 #ifndef __LFO_H__
 #define __LFO_H__
 
-#include <lfo.h>  // required for function generation
+#include "src/lfo-main/lfo.h"  // required for function generation
 
 //static constexpr uint16_t PWM_CC = 4096;
-static constexpr uint16_t LFO1_CC = 1000;
+static constexpr uint16_t LFO1_CC = 4000;
 static constexpr uint16_t LFO1_CC_HALF = LFO1_CC / 2;
 static constexpr uint16_t LF01_CC_THIRD = LFO1_CC / 3;
 static constexpr uint16_t LFO2_CC = 1024;
@@ -41,6 +41,8 @@ int16_t LFO1Level;
 byte LFO1Waveform = 3;
 float LFO1Speed = 50;
 float LFO1toDCO = 0;
+// Q24 fixed-point version of LFO1->DCO modulation depth, kept in sync with LFO1toDCO.
+int32_t LFO1toDCO_q24 = 0;
 int16_t LFO1toDETUNE1;
 uint16_t LFO1toDETUNE2;
 
@@ -49,7 +51,9 @@ byte LFO2Waveform;
 float LFO2Speed;
 float LFO2toDCO;
 uint16_t LFO2toDETUNE1;
-volatile uint16_t LFO2toDETUNE2;
+// LFO2->detune depth as float plus a Q24 fixed-point version for OSC2 modulation.
+float LFO2toDETUNE2 = 0.0f;
+int32_t LFO2toDETUNE2_q24 = 0;
 volatile uint16_t LFO2toOSC2DETUNE;
 volatile uint16_t LFO2toPW;
 

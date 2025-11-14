@@ -39,14 +39,16 @@ void init_LFO2() {
 inline void LFO1() {
   //tLFO1 = micros();                                     // take timestamp
   //LFO1Level = LFO1_CC_HALF - LFO1_class.getWave(micros());
-  LFO1Level = LFO1_class.getWave(micros()) - 500;
-  DETUNE_INTERNAL = (float)((float)LFO1Level * LFO1toDCO);
+  LFO1Level = LFO1_class.getWave(micros()) - LFO1_CC_HALF;
+  // Produce detune modulation directly in Q24 fixed-point:
+  // detune_q24 = (LFO1Level * LFO1toDCO) * 2^24
+  DETUNE_INTERNAL_q24 = (int32_t)LFO1Level * LFO1toDCO_q24;
 }
 
 inline void LFO2() {
   //tLFO1 = micros();                                     // take timestamp
   //LFO1Level = LFO1_CC_HALF - LFO1_class.getWave(micros());
-  LFO2Level = LFO2_class.getWave(micros()) - 500;
+  LFO2Level = LFO2_class.getWave(micros()) - LFO2_CC_HALF;
   //PW_MOD = (float)((float)LFO2Level * LFO2toPW);
   DETUNE_INTERNAL2 = (float)((float)LFO2Level * LFO2toDETUNE2);
 }

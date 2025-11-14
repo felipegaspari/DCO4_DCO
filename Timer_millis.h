@@ -13,6 +13,7 @@ unsigned long timer1ms = 0;
 // unsigned long timer67ms = 0;
 unsigned long timer200ms = 0;
 //unsigned long timer500ms = 0;
+unsigned long timer1000ms = 0;
 
 bool timer99microsFlag = 0;
 bool timer223microsFlag = 0;
@@ -26,5 +27,5 @@ bool timer1msFlag = 0;
 // bool timer67msFlag = 0;
 bool timer200msFlag = 0;
 //bool timer500msFlag = 0;
-
+bool timer1000msFlag = 0;
 #endif

@@ -13,6 +13,8 @@ inline void millisTimer()
   // timer67msFlag = 0;
   timer200msFlag = 0;
   //  timer500msFlag = 0;
+  timer1000msFlag = 0;
+
 
   unsigned long currentMillis = millis();
   unsigned long currentMicros = micros();
@@ -73,6 +75,12 @@ inline void millisTimer()
   {
     timer200ms = currentMillis;
     timer200msFlag = 1;
+  }
+
+  if (currentMillis - timer1000ms > 1000)
+  {
+    timer1000ms = currentMillis;
+    timer1000msFlag = 1;
   }
 
   //    if ( currentMillis - timer500ms > 500) {

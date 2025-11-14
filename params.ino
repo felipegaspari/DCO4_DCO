@@ -33,7 +33,11 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
 
     case 16:
-      LFO2toDETUNE2 = (float)expConverterFloat(paramValue, 500) / 275000;
+      {
+        float lfo2_amt = (float)expConverterFloat(paramValue, 500) / 275000.0f;
+        LFO2toDETUNE2 = lfo2_amt;
+        LFO2toDETUNE2_q24 = (int32_t)(lfo2_amt * (float)(1 << 24) + 0.5f);
+      }
       break;
 
     case 17:
@@ -129,7 +133,13 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
     case 40:
       LFO1toDCOVal = paramValue;
-      LFO1toDCO = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000;
+      {
+        // Compute LFO1->DCO modulation depth both in float (for any legacy use)
+        // and in Q24 fixed-point for the fast detune path.
+        float lfo1_amt = (float)expConverterFloat(LFO1toDCOVal, 500) / 275000.0f;
+        LFO1toDCO = lfo1_amt;
+        LFO1toDCO_q24 = (int32_t)(lfo1_amt * (float)(1 << 24) + 0.5f);
+      }
       break;
 
     case 41:
@@ -153,7 +163,25 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
       break;
 
     case 47:
-      ADSR1toDETUNE1 = paramValue;
+      // ADSR1toDETUNE1 controls how much ADSR1 modulates pitch (detune).
+      // Original float formula was:
+      //   ADSRModifier = linToLogLookup[level] * (ADSR1toDETUNE1 / 1080000.0f)
+      // We now precompute a Q24 scale factor so the per-voice path stays fixed-point:
+      //   ADSRModifier_q24 = linToLogLookup[level] * ADSR1toDETUNE1_scale_q24
+      ADSR1toDETUNE1 = (int16_t)paramValue;
+      if (ADSR1toDETUNE1 == 0) {
+        ADSR1toDETUNE1_scale_q24 = 0;
+      } else {
+        int64_t num = ((int64_t)ADSR1toDETUNE1 << 24);
+        // Symmetric rounding toward nearest for positive/negative values
+        const int32_t denom = 1080000;
+        if (num >= 0) {
+          num += (denom / 2);
+        } else {
+          num -= (denom / 2);
+        }
+        ADSR1toDETUNE1_scale_q24 = (int32_t)(num / denom);
+      }
       break;
 
     case 48:
