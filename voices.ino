@@ -2,7 +2,7 @@
 
 #define COMPARE_CLK_DIV 0
 // Enable/disable detailed DCO debug report (including OSC1 frequency stages)
-#define DCO_DEBUG_REPORT 0
+#define DCO_DEBUG_REPORT 1
 
 static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
   int window = 0;
@@ -370,9 +370,12 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       ra_freq_scaling_post.addValue((float)(micros() - t_freq_scaling_post));
 #endif
-      // Convert from Q24 fixed-point to float for the simple divider calculation.
-      float freq = (float)freq_q24_A / (float)(1 << 24);
-      float freq2 = (float)freq_q24_B / (float)(1 << 24);
+      // Convert from Q24 fixed-point to a compact Q4 (Hz * 2^4) representation.
+      // freq_q24_X is Hz * 2^24, so shifting right by 20 yields Hz * 2^4.
+      uint32_t freqA_Q4 = (uint32_t)((freq_q24_A + (1LL << 19)) >> 20);  // round to nearest
+      uint32_t freqB_Q4 = (uint32_t)((freq_q24_B + (1LL << 19)) >> 20);  // round to nearest
+      if (freqA_Q4 == 0) freqA_Q4 = 1;
+      if (freqB_Q4 == 0) freqB_Q4 = 1;
 
       uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
       uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
@@ -386,36 +389,40 @@ inline void voice_task() {
 #ifdef RUNNING_AVERAGE
       unsigned long t_clk_div = micros();
 #endif
-      // Final, Corrected Optimization: Use 32-bit reciprocal multiplication.
-      // This is division-free in the hot path and provides high precision.
-      //
-      // OSC1 fixed-point equivalent of:
-      //   total_cycles1   = sysClock_Hz / freq;
-      //   total_osr_val1  = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div1        = total_osr_val1 / NUM_OSR_CHUNKS;  // NUM_OSR_CHUNKS = 4
-      register uint32_t clk_div1 = 0;
 
-      // Convert Q24 frequency to Q20 and approximate 1/f in Q20 with a single 32-bit division.
-      uint32_t freq_q20 = (uint32_t)(freq_q24_A >> 4);
-      if (freq_q20 == 0) freq_q20 = 1;
+      register uint32_t clk_div2, clk_div1;
 
-      uint32_t d = freq_q20 >> 10;  // ≈ freq * 2^10
-      if (d == 0) d = 1;
+      uint8_t arbitrary_measured_correction_value = 0; // 60 is a measured correction for the PIO
+      
+      uint32_t phaseDelay = 0;
+      // --- Oscillator 1: Fixed-point Calculation (no float / 64-bit divide) ---
+      // freqA_Q4 represents Hz * 2^4, so multiply sysClock_Hz by 2^4 and divide.
+      uint32_t total_cycles1 = (sysClock_Hz * 16u + (freqA_Q4 / 2u)) / freqA_Q4;  // rounded
 
-      // recip ≈ 2^20 / freq (Q20 approximation of 1/f)
-      uint32_t recip = (1U << 30) / d;
+      uint32_t total_osr_val1 = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES + arbitrary_measured_correction_value;  
 
-      // total_cycles1 ≈ sysClock_Hz / freq, with rounding
-      uint32_t total_cycles1 =
-        (uint32_t)((((uint64_t)sysClock_Hz * (uint64_t)recip) + (1ULL << 19)) >> 20);
+      clk_div1 = total_osr_val1 / NUM_OSR_CHUNKS;
 
-      // Direct fixed-point equivalent of:
-      //   total_osr_val1 = total_cycles1 - T_HIGH_TOTAL_CYCLES - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div1       = total_osr_val1 / NUM_OSR_CHUNKS;
-      uint32_t total_osr_val1 =
-        total_cycles1 - (T_HIGH_TOTAL_CYCLES + T_LOW_OVERHEAD_CYCLES);
-      // Divide by NUM_OSR_CHUNKS (4) with rounding to nearest
-      clk_div1 = (total_osr_val1 + (NUM_OSR_CHUNKS / 2)) / NUM_OSR_CHUNKS;
+      // --- Oscillator 2: Fixed-point Calculation (no float / 64-bit divide) ---
+      uint32_t total_cycles2 = (sysClock_Hz * 16u + (freqB_Q4 / 2u)) / freqB_Q4;  // rounded
+
+      // 1. Calculate the dynamic phase and high period on EVERY call. This ensures
+      //    our math reflects the parameters for the current moment, even if they
+      //    are only sent to the hardware during note-on.
+      if (oscSync > 1) {
+        // Compute cycles-per-degree first to avoid overflow: round(total_cycles2 / 360)
+        uint32_t cycles_per_degree = (total_cycles2 + 180u) / 360u;
+        phaseDelay = cycles_per_degree * (uint32_t)phaseAlignOSC2;
+      } else {
+        phaseDelay = 0;
+      }
+      uint32_t y_val2 = pioPulseLength + phaseDelay;
+      uint32_t high_total_cycles2 = y_val2 + T_HIGH_OVERHEAD_CYCLES;
+
+      // 2. Calculate the low period using the CORRECT, potentially phase-delayed high period.
+      //    This is the critical fix.
+      uint32_t total_osr_val2 = total_cycles2 - high_total_cycles2 - T_LOW_OVERHEAD_CYCLES + arbitrary_measured_correction_value;
+      clk_div2 = total_osr_val2 / NUM_OSR_CHUNKS;
 
 #if COMPARE_CLK_DIV
       if (i == 0) {  // Only print for the first voice to avoid spam
@@ -433,51 +440,6 @@ inline void voice_task() {
         }
       }
 #endif
-
-      register uint32_t clk_div2 = 0;
-      uint32_t phaseDelay = 0;
-
-
-      // OSC2 fixed-point equivalent of:
-      //   total_cycles2   = sysClock_Hz / freq2;
-      //   phaseDelay      = (oscSync > 1) ? total_cycles2 * INV_DEGREES_IN_CIRCLE * phaseAlignOSC2 : 0;
-      //   y_val2          = pioPulseLength + phaseDelay;
-      //   high_total2     = y_val2 + T_HIGH_OVERHEAD_CYCLES;
-      //   total_osr_val2  = total_cycles2 - high_total2 - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div2        = total_osr_val2 >> 3;
-
-      // 1) total_cycles2 ≈ sysClock_Hz / freq2
-      uint32_t freq_q20_B = (uint32_t)(freq_q24_B >> 4);
-      if (freq_q20_B == 0) freq_q20_B = 1;
-
-      uint32_t d_B = freq_q20_B >> 10;  // ≈ freq2 * 2^10
-      if (d_B == 0) d_B = 1;
-
-      // recip ≈ 2^20 / freq2 (Q20 approximation of 1/f2)
-      uint32_t recip_B = (1U << 30) / d_B;
-
-      uint32_t total_cycles2 =
-        (uint32_t)((((uint64_t)sysClock_Hz * (uint64_t)recip_B) + (1ULL << 19)) >> 20);
-
-      // 2) Dynamic phase delay in cycles when sync is active.
-      if (oscSync > 1 && phaseAlignOSC2 != 0) {
-        phaseDelay = (uint32_t)(((uint64_t)total_cycles2 * (uint64_t)phaseAlignOSC2 * (uint64_t)RECIP_360_Q24) >> 24);
-      } else {
-        phaseDelay = 0;
-      }
-
-      // 3) High portion including phase delay and high-period overhead.
-      uint32_t y_val2 = pioPulseLength + phaseDelay;
-      uint32_t high_total_cycles2 = y_val2 + T_HIGH_OVERHEAD_CYCLES;
-
-      // 4) Remaining low portion with low-period overhead, split into NUM_OSR_CHUNKS OSR chunks.
-      // Fixed-point equivalent of:
-      //   total_osr_val2 = total_cycles2 - high_total_cycles2 - T_LOW_OVERHEAD_CYCLES;
-      //   clk_div2       = total_osr_val2 / NUM_OSR_CHUNKS;
-      uint32_t total_osr_val2 =
-        total_cycles2 - (high_total_cycles2 + T_LOW_OVERHEAD_CYCLES);
-      // Divide by NUM_OSR_CHUNKS (4) with rounding to nearest
-      clk_div2 = (total_osr_val2 + (NUM_OSR_CHUNKS / 2)) / NUM_OSR_CHUNKS;
 
 #ifdef RUNNING_AVERAGE
       ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
@@ -523,7 +485,7 @@ inline void voice_task() {
 
       if (note_on_flag_flag[i]) {
         // --- Reverse Calculation to find the expected output frequency ---
-        uint32_t actual_total_osr_val = clk_div1 * NUM_OSR_CHUNKS;  // This is what the PIO actually gets
+        uint32_t actual_total_osr_val = (clk_div1 * NUM_OSR_CHUNKS);  // This is what the PIO actually gets
         uint32_t actual_total_period = T_HIGH_TOTAL_CYCLES + actual_total_osr_val + T_LOW_OVERHEAD_CYCLES;
         float expected_freq = (double)sysClock_Hz / (double)actual_total_period;
 
@@ -537,7 +499,8 @@ inline void voice_task() {
         Serial.printf("Total OSR Delay:    %lu cycles (Remaining for loops)\n", total_osr_val1);
         Serial.printf("clk_div (Average):  %lu (Value sent to PIO)\n", clk_div1);
         Serial.println("---");
-        Serial.printf("Actual Period Gen:  %lu cycles (High + (clk_div*8) + Low)\n", actual_total_period);
+        Serial.printf("Actual Period Gen:  %lu cycles (High + (clk_div*%u) + Low)\n",
+                      actual_total_period, (unsigned)NUM_OSR_CHUNKS);
         Serial.printf("==> Expected Freq Out: %.2f Hz\n", expected_freq);
         Serial.println("---");
 
@@ -567,8 +530,8 @@ inline void voice_task() {
 #endif
 
         if (oscSync == 1) {
-          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(6 + offset[pioNumberA]));  // OSC Sync MODE
-          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(6 + offset[pioNumberB]));
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(8 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(8 + offset[pioNumberB]));
         }
 
         if (oscSync > 1) {
@@ -878,6 +841,39 @@ inline void setVoiceMode() {
       NUM_VOICES = NUM_VOICES_TOTAL;
       STACK_VOICES = NUM_VOICES_TOTAL;
       break;
+  }
+}
+
+void setSyncMode() {
+  for (int i = 0; i < NUM_OSCILLATORS; i++) {
+    uint8_t sidesetPin;
+    switch (syncMode) {
+      case 0:
+        sidesetPin = RESET_PINS[i];
+        break;
+      case 1:
+        if (i == 0 || i == 2 || i == 4 || i == 6) {
+          sidesetPin = RESET_PINS[i];
+        } else {
+          sidesetPin = RESET_PINS[i - 1];
+        }
+        break;
+      case 2:
+        if (i == 0 || i == 2 || i == 4 || i == 6) {
+          sidesetPin = RESET_PINS[i + 1];
+        } else {
+          sidesetPin = RESET_PINS[i];
+        }
+        break;
+    }
+
+    pio_sm_set_sideset_pins(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i], sidesetPin);
+    pio_gpio_init(pio[VOICE_TO_PIO[i]], sidesetPin);
+    pio_sm_restart(pio[VOICE_TO_PIO[i]], VOICE_TO_SM[i]);  // IS THIS NEEDED ?
+  }
+
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+    note_on_flag[i] = 1;
   }
 }
 

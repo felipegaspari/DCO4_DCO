@@ -24,7 +24,7 @@ static constexpr uint32_t sysClock_Hz = sysClock * 1000;
 static constexpr uint16_t DIV_COUNTER = 14000;
 static constexpr uint16_t DIV_COUNTER_PW = 1024;
 
-static constexpr uint32_t pioPulseLength = 4000;
+static constexpr uint32_t pioPulseLength = 3000;
 static constexpr uint32_t pioPulseLengthTimesEight = pioPulseLength * 8;
 static constexpr uint32_t eightPioPulseLength = pioPulseLength / 8;
 
@@ -60,7 +60,7 @@ volatile uint8_t polyMode = 1;
 volatile uint16_t phaseAlignOSC2 = 0;
 // (removed) phaseAlignScale_Q16; use direct computation at call-site
 
-uint8_t unisonDetune = 10;
+uint8_t unisonDetune = 0;
 uint8_t analogDrift = 0;
 uint8_t analogDriftSpeed = 0;
 uint8_t analogDriftSpread = 0;
