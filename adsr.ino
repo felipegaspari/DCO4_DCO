@@ -29,7 +29,6 @@ inline void ADSR_update() {
       ADSRVoices[i].adsr1_voice.noteOn(tADSR);
       noteStart[i] = 0;
     }
-    tADSR = millis();
     ADSR1Level[i] = ADSRVoices[i].adsr1_voice.getWave(tADSR);
   }
   ADSR_set_parameters();
@@ -37,9 +36,40 @@ inline void ADSR_update() {
 
 inline void ADSR_set_parameters() {
   if ((tADSR - tADSR_params) > 5) {
-    for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
-      ADSRVoices[i].adsr1_voice.setSustain(ADSR1_sustain);
+    // Only push new parameters to the voices when they actually change,
+    // so we don't recompute internal scales/divides unnecessarily.
+    static uint16_t last_attack  = 0xFFFF;
+    static uint16_t last_decay   = 0xFFFF;
+    static uint16_t last_sustain = 0xFFFF;
+    static uint16_t last_release = 0xFFFF;
+
+    bool attack_changed  = (ADSR1_attack  != last_attack);
+    bool decay_changed   = (ADSR1_decay   != last_decay);
+    bool sustain_changed = (ADSR1_sustain != last_sustain);
+    bool release_changed = (ADSR1_release != last_release);
+
+    if (attack_changed || decay_changed || sustain_changed || release_changed) {
+      for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+        if (attack_changed) {
+          ADSRVoices[i].adsr1_voice.setAttack(ADSR1_attack);
+        }
+        if (decay_changed) {
+          ADSRVoices[i].adsr1_voice.setDecay(ADSR1_decay);
+        }
+        if (sustain_changed) {
+          ADSRVoices[i].adsr1_voice.setSustain(ADSR1_sustain);
+        }
+        if (release_changed) {
+          ADSRVoices[i].adsr1_voice.setRelease(ADSR1_release);
+        }
+      }
+
+      last_attack  = ADSR1_attack;
+      last_decay   = ADSR1_decay;
+      last_sustain = ADSR1_sustain;
+      last_release = ADSR1_release;
     }
+
     tADSR_params = tADSR;
   }
 }
