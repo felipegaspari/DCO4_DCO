@@ -1,0 +1,184 @@
+Technical Reference: Serial Comms & Parameter Routing (DCO4 System)
+This document describes how serial communication and parameter updates are structured across the DCO4 system (DCO board + mainboard), and the plan to evolve them into a shared “library‑style” core with per‑MCU plug‑ins.
+1. System Architecture Overview
+MCUs
+Mainboard controller (STM32): central router for UI, DCO, and input boards.
+DCO board (RP2040): audio/DCO engine, receives parameters and note events.
+(Others: screen controller, input board – not the focus here but part of the network.)
+Key serial links
+Mainboard ↔ DCO: Serial2 on both sides; high‑speed parameter + note link.
+Mainboard ↔ screen: Serial1.
+Mainboard ↔ input board: Serial8.
+High‑level flow
+UI/input change → some MCU decides “parameter P = V”.
+MCU sends a serial frame with:
+Command byte ('p', 'w', 'x', 'n', 'o', etc.).
+Payload bytes (param ID, value bytes, optional finish byte).
+Receiver’s serial parser reconstructs the frame and calls:
+update_parameters(paramNumber, value) for parameters, or
+direct handlers for non‑param commands (e.g. note on/off).
+2. Parameter ID Space (ParamId)
+Goal: Single, stable mapping from numeric IDs → logical parameters, shared across MCUs and tools.
+Definition
+Each project has a params_def.h that defines:
+enum ParamId : uint16_t { ... };
+IDs are grouped roughly as:
+Mainboard‑local only (e.g. wave enables 1..4, ADSR curves 48..51).
+Shared with DCO (e.g. 5 = SQR1 on/off, 10 = ADSR3→osc select, 26 = voice mode, 40 = LFO1→DCO, etc.).
+Calibration / diagnostic IDs (e.g. 150..154).
+Rules
+Never reuse or renumber existing IDs: treat them as protocol constants.
+Adding an ID:
+Append a new entry in ParamId.
+Implement handling on any MCU that cares about it.
+Keep the same number everywhere (mainboard, DCO, tools).
+Interpretation
+The enum only defines the identity; it does not define:
+Value range,
+Signedness,
+Mapping to physical units.
+The meaning of the value is defined by per‑MCU apply_param_* functions.
+3. Parameter Routing (Core Pattern)
+Both DCO and mainboard follow the same architectural pattern.
+3.1 Conceptual Model
+A central router function:
+DCO: update_parameters(byte paramNumber, int16_t value)
+Mainboard: update_parameters(byte paramNumber, int32_t value)
+A table that maps ParamId → apply_param_* function.
+update_parameters:
+Casts the incoming paramNumber to ParamId.
+Searches the table.
+Calls the corresponding apply_param_* function with the decoded value.
+3.2 Generic helper (param_router.h)
+A shared helper exists to abstract the table‑lookup pattern:
+// param_router.htemplate<typename ValueT>struct ParamDescriptorT {  ParamId id;  void (*apply)(ValueT value);};template<typename ValueT>inline void param_router_apply(    const ParamDescriptorT<ValueT>* table,    size_t tableSize,    uint16_t rawId,    ValueT value){  ParamId id = static_cast<ParamId>(rawId);  for (size_t i = 0; i < tableSize; ++i) {    if (table[i].id == id) {      table[i].apply(value);      return;    }  }}
+Planned use:
+DCO:
+using ParamDescriptor = ParamDescriptorT<int16_t>;
+update_parameters calls param_router_apply(dcoTable, ..., paramNumber, paramValue);
+Mainboard:
+using ParamDescriptor = ParamDescriptorT<int32_t>;
+update_parameters calls param_router_apply(mainTable, ..., paramNumber, paramValue);
+3.3 Per‑MCU apply_param_* functions
+Each MCU defines one function per parameter it cares about, e.g.:
+DCO example:
+apply_param_lfo1_waveform(int16_t v):
+Updates LFO1Waveform.
+Calls LFO1_class.setWaveForm(...).
+Reprograms its LFO frequency, etc.
+Mainboard example:
+apply_param_voice_mode(int32_t v):
+Updates voiceMode locally.
+Forwards the parameter to the DCO using serialSendParamByteToDCOFunction.
+These functions are where:
+Range checking,
+Scaling (to Hz, gain, Q24, etc.),
+Secondary updates / side effects
+are implemented.
+4. Serial Parameter Protocol
+4.1 On‑wire frames
+Three parameter commands are shared across MCUs:
+'p' – 16‑bit parameter
+Payload: [paramNumber, value_hi, value_lo, finish]
+value_hi / value_lo are big‑endian.
+finish is typically 1.
+'w' – 8‑bit parameter
+Payload: [paramNumber, signed_value, finish]
+signed_value is interpreted as int8_t and sign‑extended.
+'x' – 32‑bit parameter
+Payload: [paramNumber, b0, b1, b2, b3, finish]
+Value bytes [b0..b3] are little‑endian, decoded as uint32_t and often cast to int32_t.
+Other command bytes are link‑specific:
+Mainboard ↔ DCO:
+'n', 'o' for note on/off.
+DCO‑specific config commands ('f', 's' etc.) when mainboard→DCO.
+4.2 Decoding convention
+For a 'p' frame:
+paramNumber = payload[0];int16_t value = (int16_t)((payload[1] << 8) | payload[2]);update_parameters(paramNumber, value);
+For a 'w' frame:
+paramNumber = payload[0];int16_t value = (int8_t)payload[1];  // sign-extendupdate_parameters(paramNumber, value);
+For a 'x' frame:
+paramNumber = payload[0];uint32_t v = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);update_parameters(paramNumber, (int32_t)v);
+A planned shared helper header (serial_param_protocol.h) can encapsulate this:
+struct ParamFrame {  uint8_t id;  int32_t value;};void decode_p(const uint8_t* payload, ParamFrame& out);void decode_w(const uint8_t* payload, ParamFrame& out);void decode_x(const uint8_t* payload, ParamFrame& out);
+5. Serial Parser Design (DCO and Mainboard)
+Both DCO and mainboard now use the same principles:
+Non‑blocking:
+Process one byte at a time inside a loop over SerialX.available().
+No while (available < N) busy waits.
+State machine:
+WAIT_FOR_CMD:
+Read command byte.
+Look up expected payload length for that command (from a switch or a command table).
+Switch to READ_PAYLOAD.
+READ_PAYLOAD:
+Accumulate bytes into a payload buffer.
+When received_len == expected_len:
+Call the appropriate handler for that command (serial*_handle_complete_frame).
+Reset to WAIT_FOR_CMD.
+Timeout/resync:
+Each parser tracks last_byte_time_us.
+If a payload is partially received and no new byte arrives within a timeout (e.g. 5 ms), it discards the partial frame.
+This prevents a corrupt frame from blocking further processing.
+5.1 DCO Serial2 (mainboard → DCO)
+Commands handled:
+'f': PW update.
+'s': ADSR1 segment block.
+'p', 'w', 'x': parameter updates as per protocol.
+Implementation:
+Parser context struct with:
+state, command, payload[], expected_len, received_len, last_byte_time_us.
+On p/w/x, the handler uses endianness helpers and calls update_parameters.
+5.2 Mainboard Serial2 (DCO → mainboard)
+Commands handled:
+'n': note on [voice, velocity, note].
+'o': note off [voice].
+'p', 'w', 'x': parameter updates, using the same decoding rules.
+Same style of parser context and state machine as DCO.
+5.3 Planned shared parser core (serial_parser.h)
+We can extract the generic logic into something like:
+struct CommandDef {  char    cmd;  uint8_t payload_len;  void (*on_frame)(char cmd, const uint8_t* payload, uint8_t len);};struct SerialParserContext {  Serial2ParserState state;  char    command;  uint8_t payload[MAX_PAYLOAD];  uint8_t expected_len;  uint8_t received_len;  uint32_t last_byte_time_us;};void serial_parser_process_byte(    SerialParserContext& ctx,    const CommandDef* commands,    size_t numCommands,    uint8_t b,    uint32_t now_us);
+Each MCU would then:
+Define its own CommandDef[] table:
+DCO: {'f',2,...}, {'s',8,...}, {'p',4,...}, ...
+Mainboard: {'n',3,...}, {'o',1,...}, {'p',4,...}, ...
+Implement on_frame callbacks:
+For 'p'/'w'/'x', call shared decode helpers + update_parameters.
+For 'n'/'o', manipulate note state arrays.
+6. Role‑specific vs Shared Code
+Shared / library‑style modules
+params_def.h: canonical ParamId mapping.
+param_router.h: generic table‑driven router (param_router_apply + ParamDescriptorT).
+serial_param_protocol.h (planned): encode/decode 'p'/'w'/'x' payloads.
+serial_parser.h (planned): generic serial state machine.
+Per‑MCU modules
+DCO:
+params.ino: apply_param_* functions for oscillator, LFO, ADSR, drift, etc.
+Serial2 parser: command set tuned to what mainboard sends (including DCO‑specific commands).
+Mainboard:
+params.ino: apply_param_* functions that:
+Update local synth/UI state.
+Forward to DCO/screen using dedicated send functions.
+Serial2 parser: command set tuned to what DCO sends ('n'/'o' + param frames).
+Serial8 & Serial1 parsers: similar structure but different command sets.
+7. Implementation Plan for Agents
+When you (or another agent) modify or extend this system:
+Adding a parameter
+Add a new ParamId in shared params_def.h.
+On each MCU that reacts to it:
+Implement apply_param_<name>(ValueT v).
+Add a row to that MCU’s ParamDescriptor table.
+Update any UI/host code to send the new ParamId via 'p'/'w'/'x'.
+Changing parameter semantics
+Only edit the apply_param_* functions and any related DSP code.
+Do not change the ParamId numeric value.
+Ensure all MCUs/host tools still use the same ID.
+Extending serial commands
+For a new command byte:
+Add it to the appropriate CommandDef[] or switch on that link.
+Define the payload length and semantics.
+Implement the frame handler (ideally calling common helpers where possible).
+Refactoring toward shared parser
+Prefer using a generic parser core and per‑MCU command tables over copy‑pasting parser logic.
+Keep timeouts and non‑blocking behavior intact.
+This structure keeps the core protocol and routing logic shared, while letting each MCU maintain its own local DSP and routing behavior in clearly separated functions.

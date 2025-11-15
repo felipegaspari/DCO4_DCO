@@ -1,4 +1,7 @@
 #include "serial_param_protocol.h"
+#include "serial_param_protocol.h"
+#include "serial_protocol.h"
+#include "serial_parser.h"
 
 void init_serial() {
   // init serial midi
@@ -18,79 +21,88 @@ void init_serial() {
   Serial.begin(2000000);
 }
 
+/// -------------------------------
+// Serial2 parser (non-blocking, shared core)
 // -------------------------------
-// Serial2 parser (non-blocking)
-// -------------------------------
 //
-// This code parses the high-speed UART link on Serial2 (2.5 Mbps).
-// The protocol is intentionally simple:
+// This section wires the generic serial_parser.h core to the DCO's
+// Serial2 link. The DCO receives:
 //
-//   [1 byte] command character
-//   [N bytes] payload (length depends on command)
+//   'f' : PW UPDATE       (from mainboard)
+//   's' : ADSR BLOCK      (from mainboard)
+//   'p' : PARAM 16-bit    (shared param frame)
+//   'w' : PARAM 8-bit     (shared param frame)
+//   'x' : PARAM 32-bit    (shared param frame, truncated to int16 here)
 //
-// There is no explicit start-of-frame marker or checksum. We rely on:
-//   - fixed, known payload sizes per command
-//   - a timeout to drop incomplete frames
-//
-// Current commands and payload layouts (as seen by this parser):
-//
-//   'f' : 2-byte little-endian value
-//         payload[0..1] = uint16_t pwRaw (LE)
-//
-//   's' : 8-byte big-endian ADSR values
-//         payload[0..1] = ADSR1_attack  (BE)
-//         payload[2..3] = ADSR1_decay   (BE)
-//         payload[4..5] = ADSR1_sustain (BE)
-//         payload[6..7] = ADSR1_release (BE)
-//
-//   'p' : 3 bytes + 1 finish byte
-//         payload[0]   = paramNumber
-//         payload[1..2]= paramValue (BE uint16)
-//         payload[3]   = finishByte (not used here)
-//
-//   'w' : 2 bytes + 1 finish byte
-//         payload[0]   = paramNumber
-//         payload[1]   = int8 value (will be sign-extended)
-//         payload[2]   = finishByte (not used here)
-//
-//   'x' : 4 bytes + 1 finish byte
-//         payload[0]   = paramNumber
-//         payload[1..4]= int32 value (LE)
-//         payload[5]   = finishByte (not used here)
-//
-// If you add a new command in the future:
-//   1) Choose a command character.
-//   2) Define the payload layout.
-//   3) Add its expected length to serial2_process_byte().
-//   4) Add a case in serial2_handle_complete_frame().
-//
-// The parser is fully non-blocking: it processes one byte at a time
-// and never spins waiting for data.
+// The parser core is fully shared between MCUs; only the per-command
+// handlers differ by board.
 
-// Maximum payload length among all current commands:
-// 'f' = 2, 's' = 8, 'p' = 4, 'w' = 3, 'x' = 5
-static const uint8_t SERIAL2_MAX_PAYLOAD = 8;
-// Timeout to abandon a partially received frame (in microseconds).
-// If the other side stops sending part-way through a frame, we reset
-// the parser after this time so new commands can be received cleanly.
-static const uint32_t SERIAL2_FRAME_TIMEOUT_US = 5000;  // 5 ms is huge at 2.5 Mbps
+// DCO-specific handler: PW UPDATE ('f')
+static void dco_handle_pw_update(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_PW_UPDATE) {
+    return;
+  }
+  // 2-byte value, little-endian, applied to PW[0].
+  uint16_t pwRaw = (uint16_t)payload[0] | (uint16_t(payload[1]) << 8);
+  PW[0] = DIV_COUNTER_PW - (pwRaw / 4);
+}
 
-enum Serial2ParserState : uint8_t {
-  SERIAL2_WAIT_FOR_CMD = 0,  // waiting for the initial command byte
-  SERIAL2_READ_PAYLOAD       // accumulating payload bytes for the current command
+// DCO-specific handler: ADSR BLOCK ('s')
+static void dco_handle_adsr_block(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_ADSR_BLOCK) {
+    return;
+  }
+  // 8 bytes: 4 big-endian uint16 values for ADSR1.
+  ADSR1_attack  = (uint16_t(payload[0]) << 8) | uint16_t(payload[1]);
+  ADSR1_decay   = (uint16_t(payload[2]) << 8) | uint16_t(payload[3]);
+  ADSR1_sustain = (uint16_t(payload[4]) << 8) | uint16_t(payload[5]);
+  ADSR1_release = (uint16_t(payload[6]) << 8) | uint16_t(payload[7]);
+}
+
+// Shared handler pattern for parameter frames: decode via serial_param_protocol.h
+// and then call update_parameters() with int16_t (DCO uses 16-bit transport).
+static void dco_handle_param16(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_PARAM_16) {
+    return;
+  }
+  ParamFrame frame;
+  decode_param_p(payload, frame);
+  update_parameters(frame.id, (int16_t)frame.value);
+}
+
+static void dco_handle_param8(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_PARAM_8) {
+    return;
+  }
+  ParamFrame frame;
+  decode_param_w(payload, frame);
+  update_parameters(frame.id, (int16_t)frame.value);
+}
+
+static void dco_handle_param32(char, const uint8_t* payload, uint8_t len) {
+  if (len != SERIAL_PAYLOAD_LEN_PARAM_32) {
+    return;
+  }
+  ParamFrame frame;
+  decode_param_x(payload, frame);
+  // Truncate 32-bit value to 16-bit to preserve existing DCO behavior.
+  update_parameters(frame.id, (int16_t)frame.value);
+}
+
+// Command table for the DCO's Serial2 link.
+// Only commands that the DCO actually expects are listed here; any other
+// command bytes will be ignored by the parser core.
+static const SerialCommandDef dcoSerial2Commands[] = {
+  { SERIAL_CMD_PW_UPDATE,  SERIAL_PAYLOAD_LEN_PW_UPDATE,  dco_handle_pw_update  },
+  { SERIAL_CMD_ADSR_BLOCK, SERIAL_PAYLOAD_LEN_ADSR_BLOCK, dco_handle_adsr_block },
+  { SERIAL_CMD_PARAM_16,   SERIAL_PAYLOAD_LEN_PARAM_16,   dco_handle_param16    },
+  { SERIAL_CMD_PARAM_8,    SERIAL_PAYLOAD_LEN_PARAM_8,    dco_handle_param8     },
+  { SERIAL_CMD_PARAM_32,   SERIAL_PAYLOAD_LEN_PARAM_32,   dco_handle_param32    },
 };
 
-struct Serial2ParserContext {
-  Serial2ParserState state;         // current parser state
-  char command;                     // current command character
-  uint8_t payload[SERIAL2_MAX_PAYLOAD];  // payload buffer for this frame
-  uint8_t expected_len;             // how many payload bytes we expect in total
-  uint8_t received_len;             // how many payload bytes we have so far
-  uint32_t last_byte_time_us;       // timestamp of the last received byte (for timeout)
-};
-
-static Serial2ParserContext serial2Parser = {
-  SERIAL2_WAIT_FOR_CMD,
+// Parser context for this link: stores state between bytes.
+static SerialParserContext dcoSerial2Parser = {
+  SERIAL_WAIT_FOR_CMD,
   0,
   {0},
   0,
@@ -98,162 +110,23 @@ static Serial2ParserContext serial2Parser = {
   0
 };
 
-// Endianness helpers
-static inline uint16_t read_u16_be(const uint8_t *b) {
-  return (uint16_t(b[0]) << 8) | uint16_t(b[1]);
-}
-
-static inline uint16_t read_u16_le(const uint8_t *b) {
-  return uint16_t(b[0]) | (uint16_t(b[1]) << 8);
-}
-
-static inline int32_t read_i32_le(const uint8_t *b) {
-  return int32_t(b[0]) |
-         (int32_t(b[1]) << 8) |
-         (int32_t(b[2]) << 16) |
-         (int32_t(b[3]) << 24);
-}
-
-// Reset the parser to the initial "waiting for command" state.
-static void serial2_reset_parser() {
-  serial2Parser.state = SERIAL2_WAIT_FOR_CMD;
-  serial2Parser.command = 0;
-  serial2Parser.expected_len = 0;
-  serial2Parser.received_len = 0;
-  serial2Parser.last_byte_time_us = 0;
-}
-
-// Handle a completely received frame for the specified command.
-// At this point, "payload" contains "length" bytes corresponding
-// to the layouts documented at the top of this file.
-static void serial2_handle_complete_frame(char command, const uint8_t *payload, uint8_t length) {
-
-  switch (command) {
-    case 'f': {
-      // 2-byte value, little-endian, applied to PW[0].
-      // This keeps the original semantics of the previous implementation.
-      if (length == 2) {
-        uint16_t pwRaw = read_u16_le(payload);
-        PW[0] = DIV_COUNTER_PW - (pwRaw / 4);
-      }
-      break;
-    }
-
-    case 's': {
-      // 8 bytes: 4 big-endian uint16 values for ADSR1.
-      if (length == 8) {
-        ADSR1_attack  = read_u16_be(payload + 0);
-        ADSR1_decay   = read_u16_be(payload + 2);
-        ADSR1_sustain = read_u16_be(payload + 4);
-        ADSR1_release = read_u16_be(payload + 6);
-      }
-      break;
-    }
-
-    case 'p': {
-      // [paramNumber, value_hi, value_lo, finishByte]
-      // 16-bit big-endian value, decoded via shared helper.
-      if (length == 4) {
-        ParamFrame frame;
-        decode_param_p(payload, frame);
-        update_parameters(frame.id, (int16_t)frame.value);
-      }
-      break;
-    }
-
-    case 'w': {
-      // [paramNumber, int8 value, finishByte]
-      // int8 value sign-extended to 16-bit via shared helper.
-      if (length == 3) {
-        ParamFrame frame;
-        decode_param_w(payload, frame);
-        update_parameters(frame.id, (int16_t)frame.value);
-      }
-      break;
-    }
-
-    case 'x': {
-      // [paramNumber, int32_t value (little-endian), finishByte]
-      // 32-bit little-endian value decoded via shared helper and then
-      // truncated to int16 to preserve existing DCO behavior.
-      if (length == 5) {
-        ParamFrame frame;
-        decode_param_x(payload, frame);
-        update_parameters(frame.id, (int16_t)frame.value);
-      }
-      break;
-    }
-
-    default:
-      // Unknown command: ignore frame
-      break;
-  }
-}
-
-static void serial2_process_byte(uint8_t b, uint32_t now_us) {
-
-  // Timeout handling: if we're partway through a frame and it takes too long, reset.
-  if (serial2Parser.state == SERIAL2_READ_PAYLOAD &&
-      serial2Parser.last_byte_time_us != 0 &&
-      (uint32_t)(now_us - serial2Parser.last_byte_time_us) > SERIAL2_FRAME_TIMEOUT_US) {
-    serial2_reset_parser();
-  }
-
-  serial2Parser.last_byte_time_us = now_us;
-
-  if (serial2Parser.state == SERIAL2_WAIT_FOR_CMD) {
-    char commandCharacter = (char)b;
-
-    // Determine expected payload length for this command.
-    uint8_t expected_len = 0;
-    switch (commandCharacter) {
-      case 'f': expected_len = 2; break;
-      case 's': expected_len = 8; break;
-      case 'p': expected_len = 4; break;
-      case 'w': expected_len = 3; break;
-      case 'x': expected_len = 5; break;
-      default:
-        // Unknown command byte, ignore.
-        return;
-    }
-
-    serial2Parser.command = commandCharacter;
-    serial2Parser.expected_len = expected_len;
-    serial2Parser.received_len = 0;
-    serial2Parser.state = SERIAL2_READ_PAYLOAD;
-    return;
-  }
-
-  // SERIAL2_READ_PAYLOAD
-  if (serial2Parser.received_len < SERIAL2_MAX_PAYLOAD) {
-    serial2Parser.payload[serial2Parser.received_len++] = b;
-  }
-
-  if (serial2Parser.received_len >= serial2Parser.expected_len) {
-    serial2_handle_complete_frame(serial2Parser.command, serial2Parser.payload, serial2Parser.received_len);
-    serial2_reset_parser();
-  }
-}
-
-static void serial2_check_timeout() {
-  if (serial2Parser.state == SERIAL2_READ_PAYLOAD && serial2Parser.last_byte_time_us != 0) {
-    uint32_t now_us = micros();
-    if ((uint32_t)(now_us - serial2Parser.last_byte_time_us) > SERIAL2_FRAME_TIMEOUT_US) {
-      serial2_reset_parser();
-    }
-  }
-}
-
+// Main entry point for DCO <-> mainboard Serial2 receive.
 void serial_STM32_task() {
-
   // First, expire any stale partial frame
-  serial2_check_timeout();
+  uint32_t now = micros();
+  serial_parser_check_timeout(dcoSerial2Parser, now);
 
   // Then, consume all available bytes without blocking
   while (Serial2.available() > 0) {
     uint8_t b = Serial2.read();
-    uint32_t now_us = micros();
-    serial2_process_byte(b, now_us);
+    now = micros();
+    serial_parser_process_byte(
+      dcoSerial2Parser,
+      dcoSerial2Commands,
+      sizeof(dcoSerial2Commands) / sizeof(dcoSerial2Commands[0]),
+      b,
+      now
+    );
   }
 }
 
