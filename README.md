@@ -3,6 +3,8 @@
 DCO4 is a **digitally‑controlled oscillator (DCO) voice board** built around the RP2040 (Raspberry Pi Pico–class MCU).  
 It implements **4 independent synth voices**, each with **2 DCOs**, envelopes, LFOs, calibration and MIDI control, and is designed to be driven by a separate main controller and UI.
 
+The aim of the project is to create a FULLY DIGITALLY CONTROLLED ANALOG SYNTH, with patch saving for all parameters.
+
 This repository contains the **firmware for the DCO4 voice board**. Other boards in the system are:
 
 - A **main controller board** (brain/master).
