@@ -48,6 +48,151 @@ void init_sm_pin(PIO pio, uint sm, uint offset, uint pin) {
 }
 %}
 
+.program frequency_sync
+.side_set 1 opt
+.wrap_target
+lp0:
+    jmp x-- lp0
+    mov x, OSR
+    set pins, 0     side 0
+lp1:
+jmp x-- lp1
+pull_1:
+    mov x, OSR
+lp2:
+jmp x-- lp2
+pull_2:
+    mov x, OSR
+lp3:
+jmp x-- lp3
+pull_3:
+    mov x, OSR
+lp4:
+jmp x-- lp4
+pull_4:
+    mov x, OSR
+lp5:
+jmp x-- lp5
+pull_5:
+    mov x, OSR
+lp6:
+jmp x-- lp6
+pull_6:
+mov x, OSR
+lp7:
+jmp x-- lp7
+pull_7:
+    mov x, OSR
+loop_final:
+    jmp x-- loop_final
+    mov x, y  
+    set pins, 1    side 1
+.wrap
+
+% c-sdk {
+void frequency_sync(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
+    pio_sm_config c = frequency_sync_program_get_default_config(offset);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_sideset_pins(&c, pin2); 
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin2);   
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
+
+
+.program frequency_sync_4_jumps
+.side_set 1 opt
+.wrap_target
+lp0:
+    jmp x-- lp0
+    mov x, OSR
+    set pins, 0     side 0
+lp1:
+jmp x-- lp1
+pull_1:
+    mov x, OSR
+lp2:
+jmp x-- lp2
+pull_2:
+    mov x, OSR
+lp3:
+jmp x-- lp3
+pull_3:
+    mov x, OSR
+loop_final:
+    jmp x-- loop_final
+    mov x, y  
+    set pins, 1    side 1
+.wrap
+
+% c-sdk {
+void frequency_sync_4_jumps(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
+    pio_sm_config c = frequency_sync_4_jumps_program_get_default_config(offset);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_sideset_pins(&c, pin2); 
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin2);   
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
+
+
+.program frequency
+.side_set 1 opt
+.wrap_target
+lp0:
+    jmp x-- lp0
+    mov x, OSR  side 0
+lp1:
+jmp x-- lp1
+pull_1:
+    mov x, OSR
+lp2:
+jmp x-- lp2
+pull_2:
+    mov x, OSR
+lp3:
+jmp x-- lp3
+pull_3:
+    mov x, OSR
+lp4:
+jmp x-- lp4
+pull_4:
+    mov x, OSR
+lp5:
+jmp x-- lp5
+pull_5:
+    mov x, OSR
+lp6:
+jmp x-- lp6
+pull_6:
+mov x, OSR
+lp7:
+jmp x-- lp7
+pull_7:
+    mov x, OSR
+loop_final:
+    jmp x-- loop_final
+    mov x, y  side 1
+.wrap
+
+% c-sdk {
+void init_sm_pin(PIO pio, uint sm, uint offset, uint pin, uint pin2) {
+    pio_gpio_init(pio, pin);
+    pio_gpio_init(pio, pin2);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_config c = frequency_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_sideset_pins(&c, pin2);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_set_pins(&c, pin2, 1);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
+
 .program frequency_pulse1
 .side_set 1 opt
     mov x, isr      side 0

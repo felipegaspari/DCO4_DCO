@@ -1,9 +1,9 @@
-void millisTimer()
+inline void millisTimer()
 {
 
   timer99microsFlag = 0;
   timer223microsFlag = 0;
-  // timer1msFlag = 0;
+  timer1msFlag = 0;
   // timer2340microsFlag = 0;
   // timer3543microsFlag = 0;
   // timer5msFlag = 0;
@@ -13,6 +13,8 @@ void millisTimer()
   // timer67msFlag = 0;
   timer200msFlag = 0;
   //  timer500msFlag = 0;
+  timer1000msFlag = 0;
+
 
   unsigned long currentMillis = millis();
   unsigned long currentMicros = micros();
@@ -29,10 +31,10 @@ void millisTimer()
     timer223microsFlag = 1;
   }
 
-  // if ( currentMicros - timer1ms > 1001) {
-  //   timer1ms = currentMicros;
-  //   timer1msFlag = 1;
-  // }
+  if ( currentMicros - timer1ms > 1001) {
+    timer1ms = currentMicros;
+    timer1msFlag = 1;
+  }
 
   // if ( currentMicros - timer2340micros > 2340) {
   //   timer2340micros = currentMicros;
@@ -73,6 +75,12 @@ void millisTimer()
   {
     timer200ms = currentMillis;
     timer200msFlag = 1;
+  }
+
+  if (currentMillis - timer1000ms > 1000)
+  {
+    timer1000ms = currentMillis;
+    timer1000msFlag = 1;
   }
 
   //    if ( currentMillis - timer500ms > 500) {

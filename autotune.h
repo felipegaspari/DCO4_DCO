@@ -1,48 +1,69 @@
 #ifndef __AUTOTUNE_H__
 #define __AUTOTUNE_H__
 
-bool autotuneOnFlag;
-bool manualTuneOnFlag;
+#include "include_all.h"
 
+bool calibrationFlag = false;
+bool manualCalibrationFlag = false;
+bool firstTuneFlag = false;
+
+uint8_t manualCalibrationStage;
+int8_t manualCalibrationOffset[NUM_OSCILLATORS] = {0,0,0,0,0,0,0,0};
 /************************************************/
 /****************** DCO calibration ******************/
 
-const int DCO_calibration_pin = 4;
+
 
 uint32_t calibrationData[chanLevelVoiceDataSize];
 
 uint8_t currentDCO;
 
-unsigned long DCO_calibration_lastTime;
+unsigned long edgeDetectionLastTime;
 unsigned long microsNow;
 unsigned long currentNoteCalibrationStart;
 unsigned long DCOCalibrationStart;
 
-bool DCO_calibration_lastVal = 0;
+bool edgeDetectionLastVal = 0;
 
 volatile uint16_t ampCompCalibrationVal;
+int8_t initManualAmpCompCalibrationValPreset = 30;
+// weact rp2040 dco //volatile int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {24,26,25,25,25,18,20,25};
+int8_t initManualAmpCompCalibrationVal[NUM_OSCILLATORS] = {initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,
+initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset,
+
+initManualAmpCompCalibrationValPreset,initManualAmpCompCalibrationValPreset};
+volatile uint16_t ampCompLowestFreqVal = 10;
+
 
 int pulseCounter = 0;
-float DCO_calibration_avg1, DCO_calibration_avg2;
-double DCO_calibration_difference;
+int samplesCounter = 0;
 
-uint8_t DCO_calibration_avg1_counter, DCO_calibration_avg2_counter;
+double risingEdgeTimeSum, fallingEdgeTimeSum;
+float DCO_calibration_difference;
+
 
 uint16_t samplesNumber;
 
-const uint8_t DCO_calibration_start_note = 29;
+
+static constexpr uint8_t DCO_calibration_start_note = 23;
+static constexpr uint8_t calibration_note_interval = 5;
+static constexpr uint8_t manual_DCO_calibration_start_note = DCO_calibration_start_note - 5;
+
 uint8_t DCO_calibration_current_note;
 uint8_t DCO_calibration_current_voice;
 uint8_t DCO_calibration_current_OSC;
 
 uint8_t highestNoteOSC[NUM_OSCILLATORS];
 
-int16_t lastDCODifference;
+double lastDCODifference;
 uint8_t lastGapFlipCount;
-uint16_t lastPIDgap;
+double lastPIDgap;
 uint16_t lastampCompCalibrationVal;
 
+uint16_t PWCalibrationVal;
+
 byte autotuneDebug = 4;
+
 
 
 /*********************** VCO calibration  ********************/

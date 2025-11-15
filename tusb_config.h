@@ -25,7 +25,6 @@
 
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
-
 #ifdef __cplusplus
 extern "C" {
 #endif

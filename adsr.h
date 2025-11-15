@@ -1,16 +1,24 @@
 #ifndef __ADSR_H__
 #define __ADSR_H__
 
-#include <adsr.h>
+#define ADSR_1_DACSIZE 4000
 
-#define ADSR_1_DACSIZE 4096
+#define ARRAY_SIZE 512
 
-byte noteStart[NUM_VOICES_TOTAL];
-byte noteEnd[NUM_VOICES_TOTAL];
+#define LIN_TO_EXP_TABLE_SIZE ADSR_1_DACSIZE + 1
+uint16_t linToExpLookup[LIN_TO_EXP_TABLE_SIZE];
+uint16_t linToLogLookup[LIN_TO_EXP_TABLE_SIZE];
+uint16_t maxADSRControlValue = ADSR_1_DACSIZE;
+
+// ADSR Bezier library (provides curve tables and ADSR class)
+#include "src/ADSR_Bezier/ADSR_Bezier.h"
+
+volatile byte noteStart[NUM_VOICES_TOTAL];
+volatile byte noteEnd[NUM_VOICES_TOTAL];
 
 uint16_t ADSR1Level[NUM_VOICES_TOTAL];
 
-static const uint16_t ADSR_1_CC = 4096;
+static constexpr uint16_t ADSR_1_CC = 4000;
 
 float ADSRMaxLevel = ADSR_1_CC;
 
@@ -36,11 +44,16 @@ bool ADSRRestart = true;
 int16_t ADSR1toDETUNE1;
 
 float ADSR1toDETUNE1_formula;
+int32_t ADSR1toDETUNE1_scale_q24;
 
-adsr adsr1_voice_0(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);
-adsr adsr1_voice_1(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);
-adsr adsr1_voice_2(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);
-adsr adsr1_voice_3(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2);
+int16_t ADSR1toPWM;
+float ADSR1toPWM_formula;
+int32_t ADSR1toPWM_formula_q24;
+
+adsr adsr1_voice_0(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2, false,7,7,7);
+adsr adsr1_voice_1(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2, false,7,7,7);
+adsr adsr1_voice_2(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2, false,7,7,7);
+adsr adsr1_voice_3(ADSR_1_CC, ADSR1_curve1, ADSR1_curve2, false,7,7,7);
 
 //bool OSCPhaseLock = false;
 

@@ -1,12 +1,21 @@
 void init_pwm()
 {
-  for (int i = 0; i < NUM_VOICES * 2; i++)
+  for (int i = 0; i < NUM_VOICES_TOTAL * 2; i++)
   {
     gpio_set_function(RANGE_PINS[i], GPIO_FUNC_PWM);
     RANGE_PWM_SLICES[i] = pwm_gpio_to_slice_num(RANGE_PINS[i]);
     pwm_set_wrap(RANGE_PWM_SLICES[i], DIV_COUNTER);
     pwm_set_enabled(RANGE_PWM_SLICES[i], true);
   }
+
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++)
+  {
+    gpio_set_function(PW_PINS[i], GPIO_FUNC_PWM);
+    PW_PWM_SLICES[i] = pwm_gpio_to_slice_num(PW_PINS[i]);
+    pwm_set_wrap(PW_PWM_SLICES[i], DIV_COUNTER_PW);
+    pwm_set_enabled(PW_PWM_SLICES[i], true);
+  }
+
   // For VCO:
   // gpio_set_function(22, GPIO_FUNC_PWM);
   // VCO_PWM_SLICES[0] = pwm_gpio_to_slice_num(22);
