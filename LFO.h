@@ -1,7 +1,7 @@
 #ifndef __LFO_H__
 #define __LFO_H__
 
-#include "src/lfo-main/lfo.h"  // required for function generation
+#include <mo-lfo.h>  // required for function generation
 
 //static constexpr uint16_t PWM_CC = 4096;
 static constexpr uint16_t LFO1_CC = 3400;
