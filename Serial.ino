@@ -1,3 +1,5 @@
+#include "serial_param_protocol.h"
+
 void init_serial() {
   // init serial midi
   Serial1.setFIFOSize(256);
@@ -150,34 +152,34 @@ static void serial2_handle_complete_frame(char command, const uint8_t *payload, 
 
     case 'p': {
       // [paramNumber, value_hi, value_lo, finishByte]
-      // 16-bit big-endian value, passed directly to update_parameters().
+      // 16-bit big-endian value, decoded via shared helper.
       if (length == 4) {
-        uint8_t  paramNumber = payload[0];
-        uint16_t paramValue  = read_u16_be(payload + 1);
-        update_parameters(paramNumber, paramValue);
+        ParamFrame frame;
+        decode_param_p(payload, frame);
+        update_parameters(frame.id, (int16_t)frame.value);
       }
       break;
     }
 
     case 'w': {
       // [paramNumber, int8 value, finishByte]
-      // The int8 value is sign-extended to int16 and then cast to uint16,
-      // preserving the behavior of the original code.
+      // int8 value sign-extended to 16-bit via shared helper.
       if (length == 3) {
-        uint8_t paramNumber = payload[0];
-        int16_t paramValue  = int8_t(payload[1]);  // keep previous semantics
-        update_parameters(paramNumber, (uint16_t)paramValue);
+        ParamFrame frame;
+        decode_param_w(payload, frame);
+        update_parameters(frame.id, (int16_t)frame.value);
       }
       break;
     }
 
     case 'x': {
       // [paramNumber, int32_t value (little-endian), finishByte]
-      // 32-bit little-endian value, passed directly to update_parameters().
+      // 32-bit little-endian value decoded via shared helper and then
+      // truncated to int16 to preserve existing DCO behavior.
       if (length == 5) {
-        uint8_t  paramNumber = payload[0];
-        int32_t  paramValue  = read_i32_le(payload + 1);
-        update_parameters(paramNumber, paramValue);
+        ParamFrame frame;
+        decode_param_x(payload, frame);
+        update_parameters(frame.id, (int16_t)frame.value);
       }
       break;
     }

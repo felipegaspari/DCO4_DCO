@@ -1,5 +1,5 @@
-.vscode
+.vscode/
 *.backup
 *.bak
-.cursor
+.cursor/
 *.code-workspace
