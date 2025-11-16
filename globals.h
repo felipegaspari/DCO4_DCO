@@ -1,8 +1,10 @@
 #include <cstddef>
+#include "include_all.h"
+
 #ifndef __GLOBALS_H__
 #define __GLOBALS_H__
 
-//#include "include_all.h"
+
 
 #define NUM_VOICES_TOTAL 4
 #define NUM_OSCILLATORS NUM_VOICES_TOTAL * 2
@@ -92,6 +94,8 @@ static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 28, 22, 17, 16, 14
 // Raspberry Pi Pico:
 // static constexpr uint8_t RESET_PINS[NUM_VOICES_TOTAL * 2] = { 28, 26, 19, 18, 15, 13, 12, 8 };
 // static constexpr uint8_t RANGE_PINS[NUM_VOICES_TOTAL * 2] = { 27, 22, 17, 16, 14, 11,  9,  7 };
+
+// Raspberry Pi Pico 2: // ADD THIS
 
 static constexpr uint8_t VOICE_TO_PIO[NUM_VOICES_TOTAL * 2] = { 0, 0, 0, 0, 1, 1, 1, 1 };
 static constexpr uint8_t VOICE_TO_SM[NUM_VOICES_TOTAL * 2] = { 0, 1, 2, 3, 0, 1, 2, 3 };
