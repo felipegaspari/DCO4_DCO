@@ -36,8 +36,6 @@
 //   - If an unknown paramNumber is received, update_parameters() simply
 //     ignores it (same as the old default: case).
 
-#include "params_def.h"
-#include "param_router.h"
 
 // ---- Apply functions for each parameter -----------------------------
 

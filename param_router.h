@@ -1,9 +1,6 @@
 #ifndef PARAM_ROUTER_H
 #define PARAM_ROUTER_H
 
-#include <stdint.h>
-#include "params_def.h"
-
 // Generic parameter routing helper.
 //
 // Each MCU defines a ParamDescriptorT<ValueT> table where:

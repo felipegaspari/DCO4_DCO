@@ -37,6 +37,10 @@
 // #include <SingleFileDrive.h>
 // #include <EEPROM.h>
 
+#include <stdint.h>
+#include "params_def.h"
+#include "param_router.h"
+
 #include "fixed_types.h"
 
 #include "globals.h"
