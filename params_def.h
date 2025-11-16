@@ -86,11 +86,35 @@ enum ParamId : uint16_t {
   PARAM_ADSR2_ATTACK_CURVE       = 50,
   PARAM_ADSR2_DECAY_CURVE        = 51,
 
-  // --- Misc / control flags ------------------------------------------
+  // --- Misc / control / UI flags ------------------------------------
+  // Calibration mode selector (screen/UI only for now)
+  PARAM_CALIBRATION_MODE         = 101,
+
+  // Global/manual control flags (input+screen; DCO may ignore)
+  PARAM_FADERS_CONTROL_MANUAL    = 120,
+  PARAM_FADER_ROW1_CONTROL_MANUAL= 121,
+  PARAM_FADER_ROW2_CONTROL_MANUAL= 122,
+  PARAM_VCF_POTS_CONTROL_MANUAL  = 123,
   PARAM_PWM_POTS_CONTROL_MANUAL  = 124,
+  PARAM_ALL_CONTROLS_MANUAL      = 125,
 
   PARAM_ADSR3_ENABLED            = 126,
   PARAM_FUNCTION_KEY             = 127,
+
+  PARAM_VCA_POTS_CONTROL_MANUAL  = 128,
+  PARAM_POTS_CONTROL_MANUAL      = 129,
+
+  // UI navigation / calibration helper parameters (screen-focused)
+  PARAM_UI_MENU_POSITION         = 190,
+  PARAM_UI_CALIBRATION_DISMISS   = 199,
+  PARAM_UI_CALIBRATION_MENU_MODE = 200,
+
+  // Reserved / screen-only extras (future expansion)
+  PARAM_PW_VALUE                 = 210,
+  PARAM_LFO3_SPEED               = 211,
+  PARAM_LFO3_WAVEFORM            = 212,
+  PARAM_ADSR3_RESTART            = 214,
+  PARAM_VCA_LEVEL_ALT            = 215,
 
   // --- Calibration flags (shared) ------------------------------------
   PARAM_CALIBRATION_FLAG         = 150,

@@ -1,8 +1,3 @@
-#include "serial_param_protocol.h"
-#include "serial_param_protocol.h"
-#include "serial_protocol.h"
-#include "serial_parser.h"
-
 void init_serial() {
   // init serial midi
   Serial1.setFIFOSize(256);
@@ -175,38 +170,3 @@ inline void serialSendParam32(byte paramNumber, uint32_t paramValue) {
   while (Serial2.availableForWrite() < 1) {}
   Serial2.write(bytesArray, 7);
 }
-
-void serial_send_freq(float f) {
-  //     uint8_t *b = (uint8_t *)&f;
-  //     uint8_t* ret = malloc(4 * sizeof(uint8_t));
-  // unsigned int asInt = *((int*)&f);
-
-  // int i;
-  // for (i = 0; i < 4; i++) {
-  //     ret[i] = (asInt >> 8 * i) & 0xFF;
-  // }
-
-  // uint8_t *b = (uint8_t *)&f;
-  // while (Serial2.availableForWrite() == 0) {}
-
-  // Serial2.write((char *)'f');
-  // Serial2.write(b, 2);
-  return;
-}
-
-// void serial_send_voice_freq() {
-//   for (uint8_t i = 0; i < NUM_VOICES; i++) {
-//     float f = voiceFreq[i];
-//     if (uart_is_writable(uart1) > 0) {
-//       uint8_t *b = (uint8_t *)&f;
-//       uart_putc(uart1, 'v');
-//       uart_putc(uart1, i);
-//       uart_putc(uart1, (b[0]));
-//       uart_putc(uart1, (b[1]));
-//       uart_putc(uart1, (b[2]));
-//       uart_putc(uart1, (b[3]));
-//       uart_putc(uart1, '6');
-//       return;
-//     }
-//   }
-// }

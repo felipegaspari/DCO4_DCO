@@ -75,7 +75,7 @@ static void apply_param_osc2_detune_val(int16_t v) {
 }
 
 static void apply_param_lfo2_to_detune2(int16_t v) {
-  float lfo2_amt = (float)expConverterFloat(v, 500) / 275000.0f;
+  float lfo2_amt = (float)expConverterFloat((uint8_t)v, 500) / 275000.0f;
   LFO2toDETUNE2_q24 = (int32_t)(lfo2_amt * (float)(1 << 24) + 0.5f);
 }
 

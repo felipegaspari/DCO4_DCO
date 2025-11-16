@@ -11,7 +11,7 @@ uint16_t linToLogLookup[LIN_TO_EXP_TABLE_SIZE];
 uint16_t maxADSRControlValue = ADSR_1_DACSIZE;
 
 // ADSR Bezier library (provides curve tables and ADSR class)
-#include <ADSR_Bezier.h>
+#include "src/ADSR_Bezier/ADSR_Bezier.h"
 
 volatile byte noteStart[NUM_VOICES_TOTAL];
 volatile byte noteEnd[NUM_VOICES_TOTAL];
