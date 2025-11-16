@@ -99,6 +99,7 @@ static const SerialCommandDef dcoSerial2Commands[] = {
 static SerialParserContext dcoSerial2Parser = {
   SERIAL_WAIT_FOR_CMD,
   0,
+  nullptr,
   {0},
   0,
   0,
@@ -107,21 +108,25 @@ static SerialParserContext dcoSerial2Parser = {
 
 // Main entry point for DCO <-> mainboard Serial2 receive.
 void serial_STM32_task() {
-  // First, expire any stale partial frame
-  uint32_t now = micros();
-  serial_parser_check_timeout(dcoSerial2Parser, now);
+  // First, expire any stale partial frame (only if we're in a frame).
+  if (dcoSerial2Parser.state == SERIAL_READ_PAYLOAD) {
+    uint32_t now = micros();
+    serial_parser_check_timeout(dcoSerial2Parser, now);
+  }
 
-  // Then, consume all available bytes without blocking
-  while (Serial2.available() > 0) {
-    uint8_t b = Serial2.read();
-    now = micros();
-    serial_parser_process_byte(
-      dcoSerial2Parser,
-      dcoSerial2Commands,
-      sizeof(dcoSerial2Commands) / sizeof(dcoSerial2Commands[0]),
-      b,
-      now
-    );
+  // Then, consume all available bytes without blocking.
+  if (Serial2.available() > 0) {
+    uint32_t now = micros();  // one timestamp per batch is enough
+    while (Serial2.available() > 0) {
+      uint8_t b = Serial2.read();
+      serial_parser_process_byte(
+        dcoSerial2Parser,
+        dcoSerial2Commands,
+        sizeof(dcoSerial2Commands) / sizeof(dcoSerial2Commands[0]),
+        b,
+        now
+      );
+    }
   }
 }
 

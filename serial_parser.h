@@ -50,12 +50,13 @@ struct SerialCommandDef;
 // Per-link parser context: one instance per UART/link.
 // This struct holds all the state needed for the parser between calls.
 struct SerialParserContext {
-  SerialParserState state;                        // current parser state
-  char              command;                      // current command byte
-  uint8_t           payload[SERIAL_MAX_PAYLOAD];  // payload buffer
-  uint8_t           expected_len;                 // total payload bytes expected
-  uint8_t           received_len;                 // payload bytes received so far
-  uint32_t          last_byte_time_us;            // timestamp of last byte (for timeout)
+  SerialParserState        state;                        // current parser state
+  char                     command;                      // current command byte
+  const SerialCommandDef*  cmd_def;                      // cached command definition
+  uint8_t                  payload[SERIAL_MAX_PAYLOAD];  // payload buffer
+  uint8_t                  expected_len;                 // total payload bytes expected
+  uint8_t                  received_len;                 // payload bytes received so far
+  uint32_t                 last_byte_time_us;            // timestamp of last byte (for timeout)
 };
 
 // Per-command definition:
@@ -75,6 +76,7 @@ struct SerialCommandDef {
 static inline void serial_parser_reset(SerialParserContext& ctx) {
   ctx.state             = SERIAL_WAIT_FOR_CMD;
   ctx.command           = 0;
+  ctx.cmd_def           = nullptr;
   ctx.expected_len      = 0;
   ctx.received_len      = 0;
   ctx.last_byte_time_us = 0;
@@ -152,6 +154,7 @@ static inline void serial_parser_process_byte(
     }
 
     ctx.command      = cmd;
+    ctx.cmd_def      = def;
     ctx.expected_len = def->payload_len;
     ctx.received_len = 0;
     ctx.state        = SERIAL_READ_PAYLOAD;
@@ -164,12 +167,9 @@ static inline void serial_parser_process_byte(
   }
 
   if (ctx.received_len >= ctx.expected_len) {
-    // We have a full frame: find the command definition again
-    // to retrieve its on_frame callback, then call it.
-    const SerialCommandDef* def =
-        serial_parser_find_cmd(commands, numCommands, ctx.command);
-    if (def && def->on_frame) {
-      def->on_frame(ctx.command, ctx.payload, ctx.received_len);
+    // We have a full frame: use cached command definition, if any, and call it.
+    if (ctx.cmd_def && ctx.cmd_def->on_frame) {
+      ctx.cmd_def->on_frame(ctx.command, ctx.payload, ctx.received_len);
     }
     serial_parser_reset(ctx);
   }
