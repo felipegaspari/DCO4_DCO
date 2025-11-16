@@ -8,7 +8,7 @@
 - Ask the AI to optimize and clean the autotune code. 
 */
 
-#define RUNNING_AVERAGE
+// #define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"

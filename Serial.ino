@@ -13,7 +13,7 @@ void init_serial() {
   Serial2.setTX(20);
   Serial2.begin(2500000);
 
-  Serial.begin(2000000);
+  // Serial.begin(2000000);
 }
 
 /// -------------------------------
