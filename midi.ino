@@ -43,10 +43,6 @@ void handlePitchBend(byte channel, int pitchBend) {
 
 void note_on(uint8_t note, uint8_t velocity) {
 
-  if (note > highestNote) {
-    note = note - ((uint8_t(note - 108) / 12) * 12);
-  }
-
   switch (voiceMode) {
     case 0:
       VOICE_NOTES[0] = note;
