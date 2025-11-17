@@ -2078,6 +2078,8 @@ void initMultiplierTables() {
   double divisor = multiplierTableSize;
   double fraction = 4.00d / divisor;
 
+  // Build analytic tables once, then quantize for fixed engine and keep high-precision
+  // float mirrors for the float engine.
   for (int i = 0; i < multiplierTableSize; i++) {
     double x;
 
@@ -2085,17 +2087,22 @@ void initMultiplierTables() {
       x = -1.00d;
       y_value = 0.25d;
     } else if (i == multiplierTableSize - 1) {
-      x = 3;
-      y_value = 4;
+      x = 3.0d;
+      y_value = 4.0d;
     } else {
       x = (-1.00d + (fraction * (double)i));
-
-      y_value = (expInterpolationSolveY(x + 1.00d, 1.00d, 3.00d, 0.50d, 2.00d));
+      y_value = expInterpolationSolveY(x + 1.00d, 1.00d, 3.00d, 0.50d, 2.00d);
     }
 
+    // Integer tables used by the fixed-point engine (unchanged behaviour).
     xMultiplierTable[i] = (int32_t)(x * (double)multiplierTableScale);
     yMultiplierTable[i] = (int32_t)(y_value * (double)multiplierTableScale);
-    x0Q16_tbl[i] = xMultiplierTable[i] << 16;
+    x0Q16_tbl[i]        = xMultiplierTable[i] << 16;
+
+    // High-precision float mirrors used by the float engine: keep the analytic values
+    // directly in table units (no extra quantisation beyond multiplierTableScale).
+    xMultiplierTableF[i] = (float)(x * (double)multiplierTableScale);
+    yMultiplierTableF[i] = (float)(y_value * (double)multiplierTableScale);
   }
   // Precompute slopes for fast integer interpolation
   for (int i = 0; i < (multiplierTableSize - 1); ++i) {
@@ -2119,13 +2126,13 @@ void initMultiplierTables() {
   // Initialize per-DCO cache to invalid
   for (int d = 0; d < NUM_VOICES_TOTAL * 2; ++d) interpSegCache[d] = -1;
 
-  // Build float mirrors of multiplier tables and slopes for the float path.
-  for (int i = 0; i < multiplierTableSize; ++i) {
-    xMultiplierTableF[i] = (float)xMultiplierTable[i];
-    yMultiplierTableF[i] = (float)yMultiplierTable[i];
-  }
   for (int i = 0; i < multiplierTableSize - 1; ++i) {
-    slopeF[i] = (float)slopeQ20[i] / (float)(1 << 20);  // Q20 -> float once at init
+    // Float slopes computed directly from the float tables to avoid inheriting
+    // fixed-point quantisation error.
+    float dxF = xMultiplierTableF[i + 1] - xMultiplierTableF[i];
+    if (dxF == 0.0f) dxF = 1.0f;
+    float dyF = yMultiplierTableF[i + 1] - yMultiplierTableF[i];
+    slopeF[i] = dyF / dxF;
   }
 }
 
