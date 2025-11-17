@@ -101,7 +101,7 @@ inline void voice_task() {
   // Track portamento-time and mode changes between calls so we can smoothly
   // retime the glide without introducing pitch discontinuities.
   static uint32_t last_portamento_time = 0;
-  static uint8_t last_portamento_mode = PORTA_MODE_TIME;
+  static uint8_t last_portamento_mode = PORTA_MODE_SLEW;
   uint32_t portaTime = portamento_time;
   uint8_t portaMode = portamento_mode;
   bool portaTimeChanged = (portaTime != last_portamento_time);
@@ -755,7 +755,7 @@ inline void voice_task_float() {
   
     // --- Track portamento control changes exactly as in original ---
     static uint32_t last_portamento_time = 0;
-    static uint8_t  last_portamento_mode = PORTA_MODE_TIME;
+    static uint8_t  last_portamento_mode = PORTA_MODE_SLEW;
     uint32_t portaTime = portamento_time;
     uint8_t  portaMode = portamento_mode;
     bool portaTimeChanged = (portaTime != last_portamento_time);
@@ -852,8 +852,6 @@ inline void voice_task_float() {
           portamentoStartMicros[i] = now_us;
           portamentoTimer[i]       = 0;
   
-          float T = (portaTime == 0) ? 1.0f : (float)portaTime;
-
           if (portaMode == PORTA_MODE_TIME) {
             // TIME-BASED: glide linearly in frequency (Hz) over portaTime microseconds.
             float stopA  = noteFreq1;
@@ -869,6 +867,7 @@ inline void voice_task_float() {
             float dA = stopA - startA;
             float dB = stopB - startB;
 
+            float T = (portaTime == 0) ? 1.0f : (float)portaTime;
             float stepA = dA / T;
             float stepB = dB / T;
             if (dA != 0.0f && stepA == 0.0f) stepA = (dA > 0.0f) ? (1.0f / T) : (-1.0f / T);
@@ -895,10 +894,29 @@ inline void voice_task_float() {
             float dNoteA = targetNoteA - startNoteA;
             float dNoteB = targetNoteB - startNoteB;
 
-            float stepNoteA = dNoteA / T;
-            float stepNoteB = dNoteB / T;
-            if (dNoteA != 0.0f && stepNoteA == 0.0f) stepNoteA = (dNoteA > 0.0f) ? (1.0f / T) : (-1.0f / T);
-            if (dNoteB != 0.0f && stepNoteB == 0.0f) stepNoteB = (dNoteB > 0.0f) ? (1.0f / T) : (-1.0f / T);
+            // Analog-style slew: treat portamento_time as the time for a reference interval
+            // (here 12 semitones). Larger intervals take proportionally longer.
+            float refSemis = 12.0f;
+            float absA = fabsf(dNoteA);
+            float absB = fabsf(dNoteB);
+            float maxAbs = (absA > absB) ? absA : absB;
+
+            float stepNoteA = 0.0f;
+            float stepNoteB = 0.0f;
+            if (maxAbs > 0.0f) {
+              float T_base = (portaTime == 0) ? 1.0f : (float)portaTime;
+              float T_eff  = T_base * (maxAbs / refSemis);  // scale time with interval
+              if (T_eff < 1.0f) T_eff = 1.0f;
+
+              stepNoteA = dNoteA / T_eff;
+              stepNoteB = dNoteB / T_eff;
+
+              // Ensure non-zero steps for non-zero intervals.
+              if (dNoteA != 0.0f && stepNoteA == 0.0f)
+                stepNoteA = (dNoteA > 0.0f) ? (1.0f / T_eff) : (-1.0f / T_eff);
+              if (dNoteB != 0.0f && stepNoteB == 0.0f)
+                stepNoteB = (dNoteB > 0.0f) ? (1.0f / T_eff) : (-1.0f / T_eff);
+            }
 
             porta_note_step_f[DCO_A] = stepNoteA;  // semitones per microsecond
             porta_note_step_f[DCO_B] = stepNoteB;
@@ -964,6 +982,77 @@ inline void voice_task_float() {
   
         freqA = curA;
         freqB = curB;
+
+        // If the portamento time or mode control changed while gliding, retime the glide
+        // from the *current* position so there is no pitch jump, only a change in glide speed/curve.
+        if (portaTimeChanged || portaModeChanged) {
+          portamentoStartMicros[i] = now_us;
+          portamentoTimer[i]       = 0;
+
+          if (portaMode == PORTA_MODE_TIME) {
+            // Recompute time-based glide from current frequency.
+            float targetA = noteFreq1;
+            float targetB = noteFreq2;
+
+            porta_freq_start_f[DCO_A] = curA;
+            porta_freq_start_f[DCO_B] = curB;
+            porta_freq_stop_f [DCO_A] = targetA;
+            porta_freq_stop_f [DCO_B] = targetB;
+
+            float T = (portaTime == 0) ? 1.0f : (float)portaTime;
+            float dA = targetA - curA;
+            float dB = targetB - curB;
+            float stepA = dA / T;
+            float stepB = dB / T;
+            if (dA != 0.0f && stepA == 0.0f) stepA = (dA > 0.0f) ? (1.0f / T) : (-1.0f / T);
+            if (dB != 0.0f && stepB == 0.0f) stepB = (dB > 0.0f) ? (1.0f / T) : (-1.0f / T);
+
+            porta_freq_step_f[DCO_A] = stepA;
+            porta_freq_step_f[DCO_B] = stepB;
+          } else {
+            // Recompute slew-rate glide from current note position.
+            float currentNoteA = porta_note_cur_f[DCO_A];
+            float currentNoteB = porta_note_cur_f[DCO_B];
+            float targetNoteA  = (float)note1;
+            float targetNoteB  = (float)note2;
+
+            porta_note_start_f[DCO_A] = currentNoteA;
+            porta_note_start_f[DCO_B] = currentNoteB;
+            porta_note_stop_f [DCO_A] = targetNoteA;
+            porta_note_stop_f [DCO_B] = targetNoteB;
+
+            float dNoteA = targetNoteA - currentNoteA;
+            float dNoteB = targetNoteB - currentNoteB;
+
+            float refSemis = 12.0f;
+            float absA = fabsf(dNoteA);
+            float absB = fabsf(dNoteB);
+            float maxAbs = (absA > absB) ? absA : absB;
+
+            float stepNoteA = 0.0f;
+            float stepNoteB = 0.0f;
+            if (maxAbs > 0.0f) {
+              float T_base = (portaTime == 0) ? 1.0f : (float)portaTime;
+              float T_eff  = T_base * (maxAbs / refSemis);
+              if (T_eff < 1.0f) T_eff = 1.0f;
+
+              stepNoteA = dNoteA / T_eff;
+              stepNoteB = dNoteB / T_eff;
+
+              if (dNoteA != 0.0f && stepNoteA == 0.0f)
+                stepNoteA = (dNoteA > 0.0f) ? (1.0f / T_eff) : (-1.0f / T_eff);
+              if (dNoteB != 0.0f && stepNoteB == 0.0f)
+                stepNoteB = (dNoteB > 0.0f) ? (1.0f / T_eff) : (-1.0f / T_eff);
+            }
+
+            porta_note_step_f[DCO_A] = stepNoteA;
+            porta_note_step_f[DCO_B] = stepNoteB;
+
+            // Keep Hz-domain state coherent at the new start.
+            porta_freq_cur_f[DCO_A] = noteIndex_to_freqFloat(currentNoteA);
+            porta_freq_cur_f[DCO_B] = noteIndex_to_freqFloat(currentNoteB);
+          }
+        }
   
       } else {
         // No portamento
@@ -1107,19 +1196,19 @@ inline void voice_task_float() {
       uint16_t chanLevel, chanLevel2;
       switch (syncMode) {
         case 0:
-          chanLevel  = get_chan_level_float(freqA_Hz, DCO_A);
-          chanLevel2 = get_chan_level_float(freqB_Hz, DCO_B);
+          chanLevel  = get_chan_level_for_engine(freqA_Hz, DCO_A);
+          chanLevel2 = get_chan_level_for_engine(freqB_Hz, DCO_B);
           break;
         case 1: {
           float maxFreq = (freqA_Hz > freqB_Hz) ? freqA_Hz : freqB_Hz;
-          chanLevel  = get_chan_level_float(maxFreq, DCO_A);
-          chanLevel2 = get_chan_level_float(freqB_Hz, DCO_B);
+          chanLevel  = get_chan_level_for_engine(maxFreq, DCO_A);
+          chanLevel2 = get_chan_level_for_engine(freqB_Hz, DCO_B);
           break;
         }
         case 2: {
           float maxFreq = (freqA_Hz > freqB_Hz) ? freqA_Hz : freqB_Hz;
-          chanLevel  = get_chan_level_float(freqA_Hz, DCO_A);
-          chanLevel2 = get_chan_level_float(maxFreq, DCO_B);
+          chanLevel  = get_chan_level_for_engine(freqA_Hz, DCO_A);
+          chanLevel2 = get_chan_level_for_engine(maxFreq, DCO_B);
           break;
         }
       }
@@ -1570,7 +1659,7 @@ inline uint16_t get_chan_level_float(float freqHz, uint8_t voiceN) {
     return ampCompArray[voiceN][ampCompTableSize - 1];
   }
 
-  // Linear scan over small table (same structure as original float version),
+  // Linear scan over small table,
   // with an added plateau clamp.
   for (int i = 0; i < ampCompTableSize - 2; ++i) {
     if (ampCompFrequencyHz[voiceN][i] <= freqHz &&
@@ -2172,58 +2261,3 @@ void print_voice_task_timings() {
   Serial.println("===================================================\n");
 }
 #endif
-
-
-// // Uses non linear interpolation and coefficients
-// inline uint16_t get_chan_level_lookup_original(int32_t x, uint8_t voiceN) {
-//   // Note: Timing is measured at the call site in voice_task() for total lookup time
-//   // This includes both OSC1 and OSC2 lookups per voice iteration
-
-//   // Check if x is out of bounds
-//   if (x <= ampCompFrequencyArray[voiceN][0]) {
-//     return ampCompArray[voiceN][0];
-//   }
-//   if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) {
-//     return ampCompArray[voiceN][ampCompTableSize - 1];
-//   }
-
-//   // Find the interval x is in and use the precomputed coefficients
-//   for (int i = 0; i < ampCompTableSize - 2; i++) {
-//     if (ampCompFrequencyArray[voiceN][i] <= x && x < ampCompFrequencyArray[voiceN][i + 2]) {
-//       // Calculate the interpolated value using the precomputed coefficients
-//       float interpolatedValue = aCoeff[voiceN][i] * x * x + bCoeff[voiceN][i] * x + cCoeff[voiceN][i];
-
-//       // Round the result to the nearest integer
-//       return round(interpolatedValue);
-//     }
-//   }
-//   // If no interval is found (should not happen), return 0
-//   return 0;
-// }
-
-// Uses non linear interpolation and coefficients
-inline uint16_t get_chan_level_lookup_original_float_version(float x, uint8_t voiceN) {
-  // Note: Timing is measured at the call site in voice_task() for total lookup time
-  // This includes both OSC1 and OSC2 lookups per voice iteration
-
-  // Check if x is out of bounds
-  if (x <= ampCompFrequencyHz[voiceN][0]) {
-    return ampCompArray[voiceN][0];
-  }
-  if (x >= ampCompFrequencyHz[voiceN][ampCompTableSize - 1]) {
-    return ampCompArray[voiceN][ampCompTableSize - 1];
-  }
-
-  // Find the interval x is in and use the precomputed coefficients
-  for (int i = 0; i < ampCompTableSize - 2; i++) {
-    if (ampCompFrequencyHz[voiceN][i] <= x && x < ampCompFrequencyHz[voiceN][i + 2]) {
-      // Calculate the interpolated value using the precomputed coefficients
-      float interpolatedValue = aCoeff[voiceN][i] * x * x + bCoeff[voiceN][i] * x + cCoeff[voiceN][i];
-
-      // Round the result to the nearest integer
-      return round(interpolatedValue);
-    }
-  }
-  // If no interval is found (should not happen), return 0
-  return 0;
-}
