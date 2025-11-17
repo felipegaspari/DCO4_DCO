@@ -278,73 +278,22 @@ static inline void precompute_amp_comp_for_engine() {
 }
 
 // Unified lookup facade: always take frequency in Hz, choose implementation at compile time.
-// The concrete implementations are defined just below.
-static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN);
-
-#ifndef USE_FLOAT_AMP_COMP
-// Forward declaration for the fixed-point fast lookup implemented in voices.ino
-inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN);
-#endif
+// The concrete implementations live in voices.ino; we only provide the wrapper and prototypes here.
 
 #ifdef USE_FLOAT_AMP_COMP
-// Pure-float amplitude compensation lookup for the RP2350/float voice path.
-// Uses sanitized float-domain frequency table (Hz) and precomputed quadratic coefficients,
-// with the same plateau handling and window layout as the fixed-point path.
-static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN) {
-  if (freqHz <= 0.0f) return 0;
-
-  const float*   freqRow    = ampCompFrequencyHz[voiceN];
-  const int32_t* ampRow     = ampCompArray[voiceN];
-  const bool*    plateauRow = plateauWindow[voiceN];
-
-  // Boundary conditions in Hz
-  if (freqHz <= freqRow[0]) {
-    int32_t y0 = ampRow[0];
-    if (y0 < 0) y0 = 0;
-    if (y0 > (int32_t)DIV_COUNTER) y0 = (int32_t)DIV_COUNTER;
-    return (uint16_t)y0;
-  }
-  const int lastIdx = ampCompTableSize;
-  if (freqHz >= freqRow[lastIdx]) {
-    int32_t yN = ampRow[lastIdx];
-    if (yN < 0) yN = 0;
-    if (yN > (int32_t)DIV_COUNTER) yN = (int32_t)DIV_COUNTER;
-    return (uint16_t)yN;
-  }
-
-  // Cached window search (per oscillator)
-  static uint8_t lastWindowFloat[NUM_OSCILLATORS] = { 0 };
-  int window = lastWindowFloat[voiceN];
-  const int maxWindow = ampCompTableSize - 2;
-  if (window > maxWindow) window = maxWindow;
-
-  while (window > 0 && freqHz < freqRow[window]) {
-    --window;
-  }
-  while (window < maxWindow && freqHz > freqRow[window + 2]) {
-    ++window;
-  }
-  lastWindowFloat[voiceN] = (uint8_t)window;
-
-  // Plateau handling: if we are in a plateau window and past the mid point, drive full scale.
-  if (plateauRow[window] && freqHz >= freqRow[window + 1]) {
-    return (uint16_t)DIV_COUNTER;
-  }
-
-  float a = aCoeff[voiceN][window];
-  float b = bCoeff[voiceN][window];
-  float c = cCoeff[voiceN][window];
-
-  float y = (a * freqHz + b) * freqHz + c;
-  int32_t yi = (int32_t)lrintf(y);
-  if (yi < 0) yi = 0;
-  if (yi > (int32_t)DIV_COUNTER) yi = (int32_t)DIV_COUNTER;
-
-  return (uint16_t)yi;
-}
+// Float engine: pure-Hz fast lookup implemented in voices.ino
+uint16_t get_chan_level_float(float freqHz, uint8_t voiceN);
 #else
-// Fixed-point engine: convert Hz to Q(FREQ_FRAC_BITS) and use the fast fixed-point lookup.
+// Fixed engine: fast fixed-point lookup implemented in voices.ino
+uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN);
+#endif
+
 static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN) {
+#ifdef USE_FLOAT_AMP_COMP
+  // Float amp-comp: delegate directly to the Hz-domain lookup.
+  return get_chan_level_float(freqHz, voiceN);
+#else
+  // Fixed-point amp-comp: convert Hz to Q(FREQ_FRAC_BITS) and call fast lookup.
   if (freqHz <= 0.0f) return 0;
   if (freqHz >= (float)AMP_COMP_MAX_HZ) {
     return get_chan_level_lookup_fast(AMP_COMP_MAX_HZ_Q, voiceN);
@@ -352,8 +301,8 @@ static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN) {
 
   int32_t x_q = (int32_t)lrintf(freqHz * (float)(1 << FREQ_FRAC_BITS));
   return get_chan_level_lookup_fast(x_q, voiceN);
-}
 #endif
+}
 
 
 

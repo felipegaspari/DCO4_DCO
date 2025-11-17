@@ -15,29 +15,6 @@
 // Note: RunningAverage objects for voice_task timing are defined in voices.ino
 #endif
 
-  // Pitch interpolation mode:
-#define PITCH_USE_RATIO_Q16 1 // Uncomment this to use Q16 for pitch interpolation. dEFAULT mode.
-
-// IF PITCH_USE_RATIO_Q16 IS NOT DEFINED, THEN:
-  // Use Q12 for pitch interpolation. Q12 is a good compromise between accuracy and speed.
-  // This mostly affects the multiplier table interpolation (pitch bend, detune, unison, ADSR, drift etc.) applied to frequency.
-  // Higher precision means smaller stepping when modulating frequency.
-  //
-  // #ifdef PITCH_INTERP_USE_Q8_ 32-bit friendly path: slope in Q8, delta in Q8; total 16 frac bits
-  // #ifdef PITCH_INTERP_USE_Q12: enables medium-precision path: slope in Q12, delta in Q12; total 24 frac bits
-  // else: enables high-precision path: slope in Q20, delta in Q16
-#define PITCH_INTERP_USE_Q12 // Uncomment this to use Q12 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
-//#define PITCH_INTERP_USE_Q8 // Uncomment this to use Q8 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
-
-
-
-// Select clock-divider precision mode for the fixed-point path:
-// 0 = fast 32-bit fixed-point, 1 = high-precision 64bit integer division
-// High precision is preferred for better accuracy at low frequencies, but it is much slower than fixed point. 
-// High precision is the default method, at 4uS per voice. Fixed-point takes 1uS per voice.
-// The fixed-point method is there in case I want to try some crazy fast modulation, or to move the project to a much slower processor.
-#define HIGH_PRECISION_CLKDIV 1
-
 // ---------------------------------------------------------------------------
 // Voice engine build options
 // ---------------------------------------------------------------------------
@@ -53,6 +30,32 @@
   // Use float-based amplitude compensation (pure Hz domain).
   #define USE_FLOAT_AMP_COMP
 #endif
+
+
+// ---------------------------------------------------------------------------
+// RP2040 or fixed point engine specific settings
+  // Pitch interpolation mode:
+  #define PITCH_USE_RATIO_Q16 1 // Uncomment this to use Q16 for pitch interpolation. dEFAULT mode.
+
+  // IF PITCH_USE_RATIO_Q16 IS NOT DEFINED, THEN:
+    // Use Q12 for pitch interpolation. Q12 is a good compromise between accuracy and speed.
+    // This mostly affects the multiplier table interpolation (pitch bend, detune, unison, ADSR, drift etc.) applied to frequency.
+    // Higher precision means smaller stepping when modulating frequency.
+    //
+    // #ifdef PITCH_INTERP_USE_Q8_ 32-bit friendly path: slope in Q8, delta in Q8; total 16 frac bits
+    // #ifdef PITCH_INTERP_USE_Q12: enables medium-precision path: slope in Q12, delta in Q12; total 24 frac bits
+    // else: enables high-precision path: slope in Q20, delta in Q16
+  #define PITCH_INTERP_USE_Q12 // Uncomment this to use Q12 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
+  //#define PITCH_INTERP_USE_Q8 // Uncomment this to use Q8 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
+  
+  
+  
+  // Select clock-divider precision mode for the fixed-point path:
+  // 0 = fast 32-bit fixed-point, 1 = high-precision 64bit integer division
+  // High precision is preferred for better accuracy at low frequencies, but it is much slower than fixed point. 
+  // High precision is the default method, at 4uS per voice. Fixed-point takes 1uS per voice.
+  // The fixed-point method is there in case I want to try some crazy fast modulation, or to move the project to a much slower processor.
+#define HIGH_PRECISION_CLKDIV 1
 
 // Uncomment to benchmark float vs double clock-divider calculations in voice_task_float:
 // #define CLKDIV_BENCHMARK

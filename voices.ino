@@ -1107,19 +1107,19 @@ inline void voice_task_float() {
       uint16_t chanLevel, chanLevel2;
       switch (syncMode) {
         case 0:
-          chanLevel  = get_chan_level_for_engine(freqA_Hz, DCO_A);
-          chanLevel2 = get_chan_level_for_engine(freqB_Hz, DCO_B);
+          chanLevel  = get_chan_level_float(freqA_Hz, DCO_A);
+          chanLevel2 = get_chan_level_float(freqB_Hz, DCO_B);
           break;
         case 1: {
           float maxFreq = (freqA_Hz > freqB_Hz) ? freqA_Hz : freqB_Hz;
-          chanLevel  = get_chan_level_for_engine(maxFreq, DCO_A);
-          chanLevel2 = get_chan_level_for_engine(freqB_Hz, DCO_B);
+          chanLevel  = get_chan_level_float(maxFreq, DCO_A);
+          chanLevel2 = get_chan_level_float(freqB_Hz, DCO_B);
           break;
         }
         case 2: {
           float maxFreq = (freqA_Hz > freqB_Hz) ? freqA_Hz : freqB_Hz;
-          chanLevel  = get_chan_level_for_engine(freqA_Hz, DCO_A);
-          chanLevel2 = get_chan_level_for_engine(maxFreq, DCO_B);
+          chanLevel  = get_chan_level_float(freqA_Hz, DCO_A);
+          chanLevel2 = get_chan_level_float(maxFreq, DCO_B);
           break;
         }
       }
@@ -1471,6 +1471,7 @@ void setSyncMode() {
   }
 }
 
+#ifndef USE_FLOAT_AMP_COMP
 /**
  * @brief Fast amplitude compensation lookup tuned for the RP2040.
  *
@@ -1480,7 +1481,7 @@ void setSyncMode() {
  * faster as it avoids processor pipeline stalls. The core calculation uses the proven,
  * numerically stable fixed-point quadratic method.
  */
-inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
+uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
   static uint8_t lastWindow[NUM_OSCILLATORS] = { 0 };
 
   // --- 1. Load pointers to this oscillator's table rows (cache friendly) ---
@@ -1551,6 +1552,59 @@ inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
 
   return (uint16_t)y;
 }
+#endif  // !USE_FLOAT_AMP_COMP
+
+#ifdef USE_FLOAT_AMP_COMP
+/**
+ * @brief Pure-float amplitude compensation lookup (Hz domain) for the RP2350 float engine.
+ *
+ * Uses sanitized float-domain frequency table (Hz) and precomputed quadratic coefficients,
+ * with plateau handling and the same window layout as the fixed-point path.
+ */
+inline uint16_t get_chan_level_float(float freqHz, uint8_t voiceN) {
+  // Boundary conditions in Hz (direct table access for minimum overhead)
+  if (freqHz <= ampCompFrequencyHz[voiceN][0]) {
+    int32_t y0 = ampCompArray[voiceN][0];
+    if (y0 < 0) y0 = 0;
+    if (y0 > (int32_t)DIV_COUNTER) y0 = (int32_t)DIV_COUNTER;
+    return (uint16_t)y0;
+  }
+  if (freqHz >= ampCompFrequencyHz[voiceN][ampCompTableSize - 1]) {
+    int32_t yN = ampCompArray[voiceN][ampCompTableSize - 1];
+    if (yN < 0) yN = 0;
+    if (yN > (int32_t)DIV_COUNTER) yN = (int32_t)DIV_COUNTER;
+    return (uint16_t)yN;
+  }
+
+  // Linear scan over small table (same structure as original float version),
+  // with an added plateau clamp.
+  for (int i = 0; i < ampCompTableSize - 2; ++i) {
+    if (ampCompFrequencyHz[voiceN][i] <= freqHz &&
+        freqHz < ampCompFrequencyHz[voiceN][i + 2]) {
+
+      // Plateau handling: if this is a plateau window and we're past the mid point,
+      // drive full-scale level to match fixed-point behaviour.
+      if (plateauWindow[voiceN][i] &&
+          freqHz >= ampCompFrequencyHz[voiceN][i + 1]) {
+        return (uint16_t)DIV_COUNTER;
+      }
+
+      float a = aCoeff[voiceN][i];
+      float b = bCoeff[voiceN][i];
+      float c = cCoeff[voiceN][i];
+
+      float y = (a * freqHz + b) * freqHz + c;
+      int32_t yi = (int32_t)lrintf(y);
+      if (yi < 0) yi = 0;
+      if (yi > (int32_t)DIV_COUNTER) yi = (int32_t)DIV_COUNTER;
+      return (uint16_t)yi;
+    }
+  }
+
+  // Fallback (should not happen if tables are well-formed)
+  return 0;
+}
+#endif  // USE_FLOAT_AMP_COMP
 
 inline uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
 
@@ -2128,3 +2182,58 @@ void print_voice_task_timings() {
   Serial.println("===================================================\n");
 }
 #endif
+
+
+// // Uses non linear interpolation and coefficients
+// inline uint16_t get_chan_level_lookup_original(int32_t x, uint8_t voiceN) {
+//   // Note: Timing is measured at the call site in voice_task() for total lookup time
+//   // This includes both OSC1 and OSC2 lookups per voice iteration
+
+//   // Check if x is out of bounds
+//   if (x <= ampCompFrequencyArray[voiceN][0]) {
+//     return ampCompArray[voiceN][0];
+//   }
+//   if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) {
+//     return ampCompArray[voiceN][ampCompTableSize - 1];
+//   }
+
+//   // Find the interval x is in and use the precomputed coefficients
+//   for (int i = 0; i < ampCompTableSize - 2; i++) {
+//     if (ampCompFrequencyArray[voiceN][i] <= x && x < ampCompFrequencyArray[voiceN][i + 2]) {
+//       // Calculate the interpolated value using the precomputed coefficients
+//       float interpolatedValue = aCoeff[voiceN][i] * x * x + bCoeff[voiceN][i] * x + cCoeff[voiceN][i];
+
+//       // Round the result to the nearest integer
+//       return round(interpolatedValue);
+//     }
+//   }
+//   // If no interval is found (should not happen), return 0
+//   return 0;
+// }
+
+// Uses non linear interpolation and coefficients
+inline uint16_t get_chan_level_lookup_original_float_version(float x, uint8_t voiceN) {
+  // Note: Timing is measured at the call site in voice_task() for total lookup time
+  // This includes both OSC1 and OSC2 lookups per voice iteration
+
+  // Check if x is out of bounds
+  if (x <= ampCompFrequencyHz[voiceN][0]) {
+    return ampCompArray[voiceN][0];
+  }
+  if (x >= ampCompFrequencyHz[voiceN][ampCompTableSize - 1]) {
+    return ampCompArray[voiceN][ampCompTableSize - 1];
+  }
+
+  // Find the interval x is in and use the precomputed coefficients
+  for (int i = 0; i < ampCompTableSize - 2; i++) {
+    if (ampCompFrequencyHz[voiceN][i] <= x && x < ampCompFrequencyHz[voiceN][i + 2]) {
+      // Calculate the interpolated value using the precomputed coefficients
+      float interpolatedValue = aCoeff[voiceN][i] * x * x + bCoeff[voiceN][i] * x + cCoeff[voiceN][i];
+
+      // Round the result to the nearest integer
+      return round(interpolatedValue);
+    }
+  }
+  // If no interval is found (should not happen), return 0
+  return 0;
+}
