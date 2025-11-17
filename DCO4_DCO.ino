@@ -45,7 +45,7 @@
     // #ifdef PITCH_INTERP_USE_Q8_ 32-bit friendly path: slope in Q8, delta in Q8; total 16 frac bits
     // #ifdef PITCH_INTERP_USE_Q12: enables medium-precision path: slope in Q12, delta in Q12; total 24 frac bits
     // else: enables high-precision path: slope in Q20, delta in Q16
-  #define PITCH_INTERP_USE_Q12 // Uncomment this to use Q12 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
+  #define PITCH_INTERP_USE_Q12  // Uncomment this to use Q12 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
   //#define PITCH_INTERP_USE_Q8 // Uncomment this to use Q8 for pitch interpolation WHEN PITCH_USE_RATIO_Q16 IS NOT DEFINED.
   
   
