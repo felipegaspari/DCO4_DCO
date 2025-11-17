@@ -8,7 +8,7 @@
 - Ask the AI to optimize and clean the autotune code. 
 */
 
-// #define RUNNING_AVERAGE
+#define RUNNING_AVERAGE
 
 #ifdef RUNNING_AVERAGE
 #include "RunningAverage.h"
@@ -31,11 +31,31 @@
 
 
 
-// Select clock-divider precision mode: 0 = fast 32-bit fixed-point, 1 = high-precision 64bit integer division
+// Select clock-divider precision mode for the fixed-point path:
+// 0 = fast 32-bit fixed-point, 1 = high-precision 64bit integer division
 // High precision is preferred for better accuracy at low frequencies, but it is much slower than fixed point. 
-// High precision is the default method, at 4uS per voice. fixed-point takes 1uS per voice.
-// The fixed-point method is there in case I want to try some crazy fast modultaion, or to move the project to a much slower processor.
+// High precision is the default method, at 4uS per voice. Fixed-point takes 1uS per voice.
+// The fixed-point method is there in case I want to try some crazy fast modulation, or to move the project to a much slower processor.
 #define HIGH_PRECISION_CLKDIV 1
+
+// ---------------------------------------------------------------------------
+// Voice engine build options
+// ---------------------------------------------------------------------------
+// High-level engine selection:
+// - For RP2040 (no FPU): comment this out to use the fixed-point engine.
+// - For RP2350 (with FPU): leave defined to use the float-based engine.
+#define USE_FLOAT_ENGINE
+
+// Derived switches for the different subsystems:
+#ifdef USE_FLOAT_ENGINE
+  // Use float-based voice task (pitch path, modifiers, clock-divider, etc.)
+  #define USE_FLOAT_VOICE_TASK
+  // Use float-based amplitude compensation (pure Hz domain).
+  #define USE_FLOAT_AMP_COMP
+#endif
+
+// Uncomment to benchmark float vs double clock-divider calculations in voice_task_float:
+// #define CLKDIV_BENCHMARK
 
 #include <Adafruit_TinyUSB.h>
 #include <MIDI.h>
@@ -129,7 +149,8 @@ void setup1() {
 
   init_ADSR();
 
-  precomputeCoefficients();
+  // Select amplitude-compensation precompute based on engine type.
+  precompute_amp_comp_for_engine();
 
   calibrationFlag = false;
   manualCalibrationFlag = false;
@@ -234,7 +255,7 @@ void loop1() {
     // loop speed
     //  loop1_start_time = micros();
     // Serial.println("pre voice task");
-    voice_task();
+    voice_task_main();
     //voice_task_gold_reference();
     //voice_task_simple();
     //voice_task_debug();

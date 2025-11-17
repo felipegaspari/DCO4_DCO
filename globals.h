@@ -162,6 +162,8 @@ void serial_midi_task();
 void note_on(uint8_t note, uint8_t velocity);
 void note_off(uint8_t note);
 void voice_task();
+void voice_task_float();
+void voice_task_main();
 void adc_task();
 
 

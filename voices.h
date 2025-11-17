@@ -34,6 +34,22 @@ int32_t porta_note_start_q16[NUM_VOICES_TOTAL * 2];
 int32_t porta_note_stop_q16[NUM_VOICES_TOTAL * 2];
 int32_t porta_note_cur_q16[NUM_VOICES_TOTAL * 2];
 int32_t porta_note_step_q16[NUM_VOICES_TOTAL * 2];
+
+// Float portamento state for the float engine (Hz and semitone domains)
+#ifdef USE_FLOAT_VOICE_TASK
+// Time-based mode: linear in frequency (Hz)
+float porta_freq_start_f[NUM_VOICES_TOTAL * 2];
+float porta_freq_stop_f [NUM_VOICES_TOTAL * 2];
+float porta_freq_step_f [NUM_VOICES_TOTAL * 2];  // Hz per microsecond
+float porta_freq_cur_f  [NUM_VOICES_TOTAL * 2];
+
+// Slew-rate mode: linear in note-space (semitones)
+float porta_note_start_f[NUM_VOICES_TOTAL * 2];
+float porta_note_stop_f [NUM_VOICES_TOTAL * 2];
+float porta_note_cur_f  [NUM_VOICES_TOTAL * 2];
+float porta_note_step_f [NUM_VOICES_TOTAL * 2];  // semitones per microsecond
+#endif
+
 uint8_t highestNote = 124;
 
 bool sqr1Status;
@@ -44,10 +60,16 @@ const int32_t multiplierTableScale = 10000;
 int32_t xMultiplierTable[multiplierTableSize];
 int32_t yMultiplierTable[multiplierTableSize];
 
+// Float mirrors of multiplier tables for the RP2350 float path
+float   xMultiplierTableF[multiplierTableSize];
+float   yMultiplierTableF[multiplierTableSize];
+
 // Precomputed left edge of each segment in Q16 to avoid shifts at runtime
 int32_t x0Q16_tbl[multiplierTableSize];
 // Precomputed per-segment slopes in Q20: slopeQ20[i] ≈ ((y[i+1]-y[i]) << 20) / (x[i+1]-x[i])
 int32_t slopeQ20[multiplierTableSize - 1];
+// Float slopes (dy/dx) for the float interpolation path
+float   slopeF[multiplierTableSize - 1];
 #ifdef PITCH_INTERP_USE_Q8
 // Optional lower-precision slope in Q8 for 32-bit fast path
 int32_t slopeQ8[multiplierTableSize - 1];

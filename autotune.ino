@@ -144,7 +144,9 @@ void DCO_calibration() {
   }
   calibrationFlag = false;
   init_FS();
-  precomputeCoefficients();
+
+  // Rebuild amp-comp tables for the active engine.
+  precompute_amp_comp_for_engine();
 }
 /*************************************************************************************/
 /*************************************************************************************/
@@ -760,8 +762,9 @@ void VCO_calibration() {
   }
   calibrationFlag = false;
   init_FS();
-  precomputeCoefficients();
-}
+  
+  // Rebuild amp-comp tables for the active engine.
+  precompute_amp_comp_for_engine();}
 
 /*************************************************************************************/
 /*************************************************************************************/

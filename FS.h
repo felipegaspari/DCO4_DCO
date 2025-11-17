@@ -10,6 +10,7 @@ static constexpr uint16_t FSPWBankSize = FSPWDataSize * NUM_VOICES_TOTAL;
 
 static constexpr uint16_t chanLevelVoiceDataSize = FSVoiceDataSize / 4;
 
+// Calibration buffers (FS-local)
 uint8_t voiceTablesCalibrationBuffer[FSVoiceDataSize];
 uint8_t PWCenterCalibrationBuffer[FSPWDataSize];
 uint8_t PWHighLimitCalibrationBuffer[FSPWDataSize];

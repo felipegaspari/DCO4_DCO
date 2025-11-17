@@ -15,24 +15,35 @@ void init_FS() {
 
 
     for (int i = 0; i < (chanLevelVoiceDataSize * NUM_OSCILLATORS); i++) {
-     freq_to_amp_comp_array[i] = (int32_t(voiceTablesBankBuffer[i * 4 + 3]) << 24) |
-                    (int32_t(voiceTablesBankBuffer[i * 4 + 2]) << 16) |
-                    (int32_t(voiceTablesBankBuffer[i * 4 + 1]) << 8) |
-                    int32_t(voiceTablesBankBuffer[i * 4 ]);
-  }
+      freq_to_amp_comp_array[i] = (int32_t(voiceTablesBankBuffer[i * 4 + 3]) << 24) |
+                                  (int32_t(voiceTablesBankBuffer[i * 4 + 2]) << 16) |
+                                  (int32_t(voiceTablesBankBuffer[i * 4 + 1]) << 8) |
+                                  int32_t(voiceTablesBankBuffer[i * 4 ]);
+    }
 
     for (int datasetIndex = 0; datasetIndex < NUM_OSCILLATORS; ++datasetIndex) {
-        for (int pairIndex = 0; pairIndex < chanLevelVoiceDataSize / 2; ++pairIndex) {
-            int rawIndex = datasetIndex * chanLevelVoiceDataSize + pairIndex * 2;
-            // Stored frequencies are in Hz*100; convert to fixed-point Hz (Hz * 2^FREQ_FRAC_BITS)
-            int32_t freq_x100 = freq_to_amp_comp_array[rawIndex];
-            int64_t scaled = (int64_t)freq_x100 * (1LL << FREQ_FRAC_BITS); // use 64-bit to avoid overflow
-            int32_t freq_fx = (scaled >= 0)
-                                ? (int32_t)((scaled + 50LL) / 100LL)    // round to nearest
-                                : (int32_t)(-((( -scaled) + 50LL) / 100LL));
-            ampCompFrequencyArray[datasetIndex][pairIndex] = freq_fx;
-            ampCompArray[datasetIndex][pairIndex] = freq_to_amp_comp_array[rawIndex + 1];
-        }
+      for (int pairIndex = 0; pairIndex < chanLevelVoiceDataSize / 2; ++pairIndex) {
+        int rawIndex = datasetIndex * chanLevelVoiceDataSize + pairIndex * 2;
+
+        // Stored frequencies are in Hz*100.
+        int32_t freq_x100 = freq_to_amp_comp_array[rawIndex];
+
+#ifdef USE_FLOAT_AMP_COMP
+        // Float engine: convert directly to Hz for the pure-float amp-comp path.
+        float freqHz = (float)freq_x100 / 100.0f;
+        ampCompFrequencyHz[datasetIndex][pairIndex] = freqHz;
+        // Level is shared between fixed and float paths.
+        ampCompArray[datasetIndex][pairIndex] = freq_to_amp_comp_array[rawIndex + 1];
+#else
+        // Fixed-point engine: convert to fixed-point Hz (Hz * 2^FREQ_FRAC_BITS).
+        int64_t scaled = (int64_t)freq_x100 * (1LL << FREQ_FRAC_BITS);  // use 64-bit to avoid overflow
+        int32_t freq_fx = (scaled >= 0)
+                            ? (int32_t)((scaled + 50LL) / 100LL)        // round to nearest
+                            : (int32_t)(-((( -scaled) + 50LL) / 100LL));
+        ampCompFrequencyArray[datasetIndex][pairIndex] = freq_fx;
+        ampCompArray[datasetIndex][pairIndex]          = freq_to_amp_comp_array[rawIndex + 1];
+#endif
+      }
     }
 
 

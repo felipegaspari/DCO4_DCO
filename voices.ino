@@ -34,7 +34,7 @@ void init_voices() {
 
   initMultiplierTables();
   setVoiceMode();
-  voice_task();
+  voice_task_main();
 }
 
 // Fast helper: convert a Q16 note (semitones) to Q24 frequency using linear
@@ -70,6 +70,29 @@ static inline int64_t noteQ16_to_freqQ24(int32_t note_q16) {
   return f0 + ((df * (int64_t)frac) >> 16);
 }
 
+// Helper: convert float Hz to Q24 fixed-point (Hz * 2^24)
+static inline int64_t float_to_q24(float f) {
+  return (int64_t)lrintf(f * (float)(1 << 24));
+}
+
+#ifdef USE_FLOAT_VOICE_TASK
+// Helper: convert a semitone index (float) to Hz using sNotePitches[] with linear interpolation.
+static inline float noteIndex_to_freqFloat(float noteIndex) {
+  const size_t LEN = sizeof(sNotePitches) / sizeof(sNotePitches[0]);
+  if (LEN == 0) return 0.0f;
+  if (noteIndex <= 0.0f) return sNotePitches[0];
+  if (noteIndex >= (float)(LEN - 1)) return sNotePitches[LEN - 1];
+
+  int n0 = (int)floorf(noteIndex);
+  int n1 = n0 + 1;
+  float t = noteIndex - (float)n0;
+  float f0 = sNotePitches[n0];
+  float f1 = sNotePitches[n1];
+  return f0 + (f1 - f0) * t;
+}
+#endif
+
+#ifndef USE_FLOAT_VOICE_TASK
 inline void voice_task() {
 #ifdef RUNNING_AVERAGE
   unsigned long voice_task_start_time = micros();
@@ -713,6 +736,491 @@ inline void voice_task() {
   last_portamento_time = portaTime;
   last_portamento_mode = portaMode;
 }
+#endif  // !USE_FLOAT_VOICE_TASK
+
+// Dispatch entry point: select float vs fixed-point implementation at compile time.
+inline void voice_task_main() {
+#ifdef USE_FLOAT_VOICE_TASK
+  voice_task_float();
+#else
+  voice_task();
+#endif
+}
+
+#ifdef USE_FLOAT_VOICE_TASK
+inline void voice_task_float() {
+  #ifdef RUNNING_AVERAGE
+    unsigned long voice_task_start_time = micros();
+  #endif
+  
+    // --- Track portamento control changes exactly as in original ---
+    static uint32_t last_portamento_time = 0;
+    static uint8_t  last_portamento_mode = PORTA_MODE_TIME;
+    uint32_t portaTime = portamento_time;
+    uint8_t  portaMode = portamento_mode;
+    bool portaTimeChanged = (portaTime != last_portamento_time);
+    bool portaModeChanged = (portaMode != last_portamento_mode);
+  
+    // --- 1. Pitch bend as float, equivalent to Q24 math ---
+  #ifdef RUNNING_AVERAGE
+    unsigned long t_start = micros();
+  #endif
+    // Use original float pitch bend behaviour, but derive multiplier from Q24
+    float pitchBendMultiplier = (float)pitchBendMultiplier_q24 / (float)(1 << 24);
+    float calcPitchbend;
+
+    if (midi_pitch_bend == 8192) {
+      calcPitchbend = 0.0f;
+    } else if (midi_pitch_bend < 8192) {
+      calcPitchbend = (((float)midi_pitch_bend / 8190.99f) - 1.0f) * pitchBendMultiplier;
+    } else {  // midi_pitch_bend > 8192
+      calcPitchbend = (((float)midi_pitch_bend / 8192.99f) - 1.0f) * pitchBendMultiplier;
+    }
+  
+  #ifdef RUNNING_AVERAGE
+    ra_pitchbend.addValue((float)(micros() - t_start));
+  #endif
+  
+    last_midi_pitch_bend = midi_pitch_bend;
+    LAST_DETUNE          = DETUNE;
+  
+    // Cache PWM sources like original
+    const int16_t local_ADSR1toPWM = ADSR1toPWM;
+    const int16_t local_LFO2toPW   = LFO2toPW;
+  
+    // --- 2. Per-voice loop (mirror original structure) ---
+    for (int i = 0; i < NUM_VOICES_TOTAL; ++i) {
+  
+  #if DCO_DEBUG_REPORT
+      float dbg_freq_base_Hz      = 0.0f;
+      float dbg_freq_after_mod_Hz = 0.0f;
+  #endif
+  
+      if (note_on_flag[i] == 1) {
+        note_on_flag_flag[i] = true;
+        note_on_flag[i]      = 0;
+      }
+  
+      if (VOICE_NOTES[i] < 0) {
+        note_on_flag_flag[i] = false;
+        continue;
+      }
+  
+      // --- 2.1 Note indices (unchanged logic) ---
+      uint8_t note1 = VOICE_NOTES[i] - 36 + OSC1_interval;
+      if (note1 > highestNote) {
+        note1 -= ((uint8_t(note1 - highestNote) / 12) * 12);
+      }
+      uint8_t note2 = note1 - 36 + OSC2_interval;
+      if (note2 > highestNote) {
+        note2 -= ((uint8_t(note2 - highestNote) / 12) * 12);
+      }
+  
+      const size_t NOTE_TABLE_LEN = sizeof(sNotePitches) / sizeof(sNotePitches[0]);
+      if (note1 >= NOTE_TABLE_LEN) note1 = (uint8_t)(NOTE_TABLE_LEN - 1);
+      if (note2 >= NOTE_TABLE_LEN) note2 = (uint8_t)(NOTE_TABLE_LEN - 1);
+  
+  #ifdef RUNNING_AVERAGE
+      unsigned long t_osc2 = micros();
+  #endif
+      // --- 2.2 OSC2 detune (float equivalent of Q24) ---
+      float detuneSteps = (float)((int)256 - OSC2DetuneVal);
+      float osc2DetuneRatio = 1.0f + 0.0002f * detuneSteps;
+  #ifdef RUNNING_AVERAGE
+      ra_osc2_detune.addValue((float)(micros() - t_osc2));
+  #endif
+  
+      // base note frequencies from float table
+      float noteFreq1 = sNotePitches[note1];
+      float noteFreq2 = sNotePitches[note2];
+  
+      float freqA, freqB;      // will hold the portamento-processed base freqs
+  
+      uint8_t DCO_A = i * 2;
+      uint8_t DCO_B = i * 2 + 1;
+  
+      // --- 2.3 Portamento (time mode & slew mode), float-only implementation ---
+  #ifdef RUNNING_AVERAGE
+      unsigned long t_portamento = micros();
+  #endif
+  
+      if (portaTime > 0) {
+        uint32_t now_us = micros();
+        portamentoTimer[i] = now_us - portamentoStartMicros[i];
+  
+        if (note_on_flag_flag[i]) {
+          portamentoStartMicros[i] = now_us;
+          portamentoTimer[i]       = 0;
+  
+          float T = (portaTime == 0) ? 1.0f : (float)portaTime;
+
+          if (portaMode == PORTA_MODE_TIME) {
+            // TIME-BASED: glide linearly in frequency (Hz) over portaTime microseconds.
+            float stopA  = noteFreq1;
+            float stopB  = noteFreq2;
+            float startA = porta_freq_cur_f[DCO_A];
+            float startB = porta_freq_cur_f[DCO_B];
+
+            porta_freq_start_f[DCO_A] = startA;
+            porta_freq_start_f[DCO_B] = startB;
+            porta_freq_stop_f [DCO_A] = stopA;
+            porta_freq_stop_f [DCO_B] = stopB;
+
+            float dA = stopA - startA;
+            float dB = stopB - startB;
+
+            float stepA = dA / T;
+            float stepB = dB / T;
+            if (dA != 0.0f && stepA == 0.0f) stepA = (dA > 0.0f) ? (1.0f / T) : (-1.0f / T);
+            if (dB != 0.0f && stepB == 0.0f) stepB = (dB > 0.0f) ? (1.0f / T) : (-1.0f / T);
+
+            porta_freq_step_f[DCO_A] = stepA;  // Hz per microsecond
+            porta_freq_step_f[DCO_B] = stepB;
+
+          } else {
+            // SLEW-RATE: glide linearly in note-space (semitones).
+            float startNoteA = porta_note_cur_f[DCO_A];
+            float startNoteB = porta_note_cur_f[DCO_B];
+            float targetNoteA = (float)note1;
+            float targetNoteB = (float)note2;
+
+            if (startNoteA == 0.0f) startNoteA = targetNoteA;
+            if (startNoteB == 0.0f) startNoteB = targetNoteB;
+
+            porta_note_start_f[DCO_A] = startNoteA;
+            porta_note_start_f[DCO_B] = startNoteB;
+            porta_note_stop_f [DCO_A] = targetNoteA;
+            porta_note_stop_f [DCO_B] = targetNoteB;
+
+            float dNoteA = targetNoteA - startNoteA;
+            float dNoteB = targetNoteB - startNoteB;
+
+            float stepNoteA = dNoteA / T;
+            float stepNoteB = dNoteB / T;
+            if (dNoteA != 0.0f && stepNoteA == 0.0f) stepNoteA = (dNoteA > 0.0f) ? (1.0f / T) : (-1.0f / T);
+            if (dNoteB != 0.0f && stepNoteB == 0.0f) stepNoteB = (dNoteB > 0.0f) ? (1.0f / T) : (-1.0f / T);
+
+            porta_note_step_f[DCO_A] = stepNoteA;  // semitones per microsecond
+            porta_note_step_f[DCO_B] = stepNoteB;
+
+            porta_note_cur_f[DCO_A] = startNoteA;
+            porta_note_cur_f[DCO_B] = startNoteB;
+
+            porta_freq_cur_f[DCO_A] = noteIndex_to_freqFloat(startNoteA);
+            porta_freq_cur_f[DCO_B] = noteIndex_to_freqFloat(startNoteB);
+          }
+        }
+  
+        int32_t elapsed_us = (int32_t)portamentoTimer[i];
+  
+        float curA, curB;
+        if (portaMode == PORTA_MODE_TIME) {
+          float startA = porta_freq_start_f[DCO_A];
+          float startB = porta_freq_start_f[DCO_B];
+          float stopA  = porta_freq_stop_f [DCO_A];
+          float stopB  = porta_freq_stop_f [DCO_B];
+
+          if ((uint32_t)elapsed_us > portaTime || portaTime == 0) {
+            curA = stopA;
+            curB = stopB;
+          } else {
+            curA = startA + porta_freq_step_f[DCO_A] * (float)elapsed_us;
+            curB = startB + porta_freq_step_f[DCO_B] * (float)elapsed_us;
+          }
+
+          porta_freq_cur_f[DCO_A] = curA;
+          porta_freq_cur_f[DCO_B] = curB;
+        } else {
+          float startNoteA = porta_note_start_f[DCO_A];
+          float startNoteB = porta_note_start_f[DCO_B];
+          float stopNoteA  = porta_note_stop_f [DCO_A];
+          float stopNoteB  = porta_note_stop_f [DCO_B];
+
+          float dNoteA = stopNoteA - startNoteA;
+          float dNoteB = stopNoteB - startNoteB;
+
+          float curNoteA = startNoteA + porta_note_step_f[DCO_A] * (float)elapsed_us;
+          float curNoteB = startNoteB + porta_note_step_f[DCO_B] * (float)elapsed_us;
+
+          // Clamp to stop as original
+          if ((dNoteA >= 0.0f && curNoteA >= stopNoteA) ||
+              (dNoteA <  0.0f && curNoteA <= stopNoteA)) {
+            curNoteA = stopNoteA;
+          }
+          if ((dNoteB >= 0.0f && curNoteB >= stopNoteB) ||
+              (dNoteB <  0.0f && curNoteB <= stopNoteB)) {
+            curNoteB = stopNoteB;
+          }
+
+          porta_note_cur_f[DCO_A] = curNoteA;
+          porta_note_cur_f[DCO_B] = curNoteB;
+
+          curA = noteIndex_to_freqFloat(curNoteA);
+          curB = noteIndex_to_freqFloat(curNoteB);
+
+          porta_freq_cur_f[DCO_A] = curA;
+          porta_freq_cur_f[DCO_B] = curB;
+        }
+  
+        freqA = curA;
+        freqB = curB;
+  
+      } else {
+        // No portamento
+        freqA = noteFreq1;
+        freqB = noteFreq2;
+
+        // Keep float portamento state coherent when portamento is off.
+        porta_freq_cur_f[DCO_A] = freqA;
+        porta_freq_cur_f[DCO_B] = freqB;
+        porta_note_cur_f[DCO_A] = (float)note1;
+        porta_note_cur_f[DCO_B] = (float)note2;
+      }
+  
+  #if DCO_DEBUG_REPORT
+      dbg_freq_base_Hz = freqA;
+  #endif
+  
+  #ifdef RUNNING_AVERAGE
+      ra_portamento.addValue((float)(micros() - t_portamento));
+  #endif
+  
+      // --- 2.4 ADSR detune (float equivalent of Q24) ---
+  #ifdef RUNNING_AVERAGE
+      unsigned long t_adsr = micros();
+  #endif
+      float ADSRModifier = 0.0f;
+      if (ADSR1toDETUNE1 != 0) {
+        float env = (float)linToLogLookup[ADSR1Level[i]];  // original int table
+        float scale = (float)ADSR1toDETUNE1_scale_q24 / (float)(1 << 24);
+        ADSRModifier = env * scale;
+      }
+      float ADSRModifierOSC1 = (ADSR3ToOscSelect == 0 || ADSR3ToOscSelect == 2) ? ADSRModifier : 0.0f;
+      float ADSRModifierOSC2 = (ADSR3ToOscSelect == 1 || ADSR3ToOscSelect == 2) ? ADSRModifier : 0.0f;
+  #ifdef RUNNING_AVERAGE
+      ra_adsr_modifier.addValue((float)(micros() - t_adsr));
+      unsigned long t_unison = micros();
+  #endif
+  
+      // --- 2.5 Unison modifier (float equivalent) ---
+      static constexpr float UNISON_SCALE = 0.0001f; // from original Q24 constant
+      int32_t mag  = (i >> 1) + 1;
+      int32_t sign = ((i & 0x01) == 0) ? 1 : -1;
+      int32_t unisonStep = sign * mag;
+      float unisonMODIFIER = (float)unisonDetune * UNISON_SCALE * (float)unisonStep;
+  #ifdef RUNNING_AVERAGE
+      ra_unison_modifier.addValue((float)(micros() - t_unison));
+      unsigned long t_drift = micros();
+  #endif
+  
+      // --- 2.6 Drift modifiers (float) ---
+      static constexpr float DRIFT_UNIT = 0.0000005f; // from original
+      float driftScale = (float)analogDrift * DRIFT_UNIT;
+      float DETUNE_DRIFT_OSC1 = (analogDrift != 0) ? (float)LFO_DRIFT_LEVEL[DCO_A] * driftScale : 0.0f;
+      float DETUNE_DRIFT_OSC2 = (analogDrift != 0) ? (float)LFO_DRIFT_LEVEL[DCO_B] * driftScale : 0.0f;
+  #ifdef RUNNING_AVERAGE
+      ra_drift_multiplier.addValue((float)(micros() - t_drift));
+  #endif
+  
+  #ifdef RUNNING_AVERAGE
+      unsigned long t_modifiers = micros();
+  #endif
+  
+      float detune_fifo = (float)DETUNE_INTERNAL_FIFO_q24 / (float)(1 << 24);
+      float detune2      = (float)DETUNE_INTERNAL2_q24     / (float)(1 << 24);
+      float eps          = (float)Q24_ONE_EPS              / (float)(1 << 24);
+      float pitchBendF   = calcPitchbend;
+  
+      float modifiersAll = detune_fifo + unisonMODIFIER + pitchBendF + eps;
+      float freqModifiers1 = ADSRModifierOSC1 + DETUNE_DRIFT_OSC1 + modifiersAll;
+      float freqModifiers2 = ADSRModifierOSC2 + DETUNE_DRIFT_OSC2 + modifiersAll + detune2;
+  
+  #ifdef RUNNING_AVERAGE
+      ra_modifiers_combination.addValue((float)(micros() - t_modifiers));
+      unsigned long t_freq_scaling_x = micros();
+  #endif
+  
+      // --- 2.7 Multiplier table x scaling & ratio interpolation (float version) ---
+      float x1 = freqModifiers1 * (float)multiplierTableScale;
+      float x2 = freqModifiers2 * (float)multiplierTableScale;
+  
+  #ifdef RUNNING_AVERAGE
+      ra_freq_scaling_x.addValue((float)(micros() - t_freq_scaling_x));
+      unsigned long t_freq_scaling_ratio = micros();
+  #endif
+  
+  #if PITCH_USE_RATIO_Q16
+      float ratio1 = interpolateRatioFloat_cached(x1, DCO_A);
+      float ratio2 = interpolateRatioFloat_cached(x2, DCO_B);
+  #ifdef RUNNING_AVERAGE
+      ra_freq_scaling_ratio.addValue((float)(micros() - t_freq_scaling_ratio));
+      unsigned long t_freq_scaling_post = micros();
+  #endif
+      // Apply ratios to portamento frequencies, with osc2 detune (Hz domain).
+      float freqA_Hz = freqA * ratio1;
+      float freqB_Hz = freqB * (ratio2 * osc2DetuneRatio);
+  #else
+      // If you keep the IntQ16 path, you can still derive ratio as float from that
+      ...
+  #endif
+  
+  #if DCO_DEBUG_REPORT
+      dbg_freq_after_mod_Hz = freqA_Hz;
+  #endif
+  
+  #ifdef RUNNING_AVERAGE
+      ra_freq_scaling_post.addValue((float)(micros() - t_freq_scaling_post));
+  #endif
+  
+      // --- 2.8 Clock divider calculation (float equivalent) ---
+  #ifdef RUNNING_AVERAGE
+      unsigned long t_clk_div = micros();
+  #endif
+
+      float totalCycles1_f = (float)sysClock_Hz / freqA_Hz;
+      float totalCycles2_f = (float)sysClock_Hz / freqB_Hz;
+
+      float correction = 0.0f;   // keep your measured correction if needed
+      float total_osr_val1_f = totalCycles1_f - (float)T_HIGH_TOTAL_CYCLES
+                             - (float)T_LOW_OVERHEAD_CYCLES + correction;
+      uint32_t clk_div1 = (uint32_t)((total_osr_val1_f / (float)NUM_OSR_CHUNKS) + 0.5f);
+
+      float phaseDelay_f = 0.0f;
+      if (oscSync > 1 && phaseAlignOSC2 != 0) {
+        phaseDelay_f = totalCycles2_f * ((float)phaseAlignOSC2 / 360.0f);
+      }
+      float y_val2_f = (float)pioPulseLength + phaseDelay_f;
+      float high_total_cycles2_f = y_val2_f + (float)T_HIGH_OVERHEAD_CYCLES;
+      float total_osr_val2_f = totalCycles2_f - high_total_cycles2_f
+                             - (float)T_LOW_OVERHEAD_CYCLES + correction;
+      uint32_t clk_div2 = (uint32_t)((total_osr_val2_f / (float)NUM_OSR_CHUNKS) + 0.5f);
+
+  #ifdef RUNNING_AVERAGE
+      ra_clk_div_calc.addValue((float)(micros() - t_clk_div));
+  #endif
+  
+      // --- 2.9 Amplitude compensation using engine-agnostic helper ---
+  #ifdef RUNNING_AVERAGE
+      unsigned long t_chan_level = micros();
+  #endif
+
+      uint16_t chanLevel, chanLevel2;
+      switch (syncMode) {
+        case 0:
+          chanLevel  = get_chan_level_for_engine(freqA_Hz, DCO_A);
+          chanLevel2 = get_chan_level_for_engine(freqB_Hz, DCO_B);
+          break;
+        case 1: {
+          float maxFreq = (freqA_Hz > freqB_Hz) ? freqA_Hz : freqB_Hz;
+          chanLevel  = get_chan_level_for_engine(maxFreq, DCO_A);
+          chanLevel2 = get_chan_level_for_engine(freqB_Hz, DCO_B);
+          break;
+        }
+        case 2: {
+          float maxFreq = (freqA_Hz > freqB_Hz) ? freqA_Hz : freqB_Hz;
+          chanLevel  = get_chan_level_for_engine(freqA_Hz, DCO_A);
+          chanLevel2 = get_chan_level_for_engine(maxFreq, DCO_B);
+          break;
+        }
+      }
+  #ifdef RUNNING_AVERAGE
+      ra_get_chan_level.addValue((float)(micros() - t_chan_level));
+  #endif
+  
+      // --- 2.10 PIO + PWM + PW math (very close to original, but float inside PW calc) ---
+      uint8_t pioNumberA = VOICE_TO_PIO[DCO_A];
+      uint8_t pioNumberB = VOICE_TO_PIO[DCO_B];
+      PIO pioN_A = pio[VOICE_TO_PIO[DCO_A]];
+      PIO pioN_B = pio[VOICE_TO_PIO[DCO_B]];
+      uint8_t sm1N = VOICE_TO_SM[DCO_A];
+      uint8_t sm2N = VOICE_TO_SM[DCO_B];
+  
+      pio_sm_put(pioN_A, sm1N, clk_div1);
+      pio_sm_put(pioN_B, sm2N, clk_div2);
+      pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, false));
+      pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+  
+      if (note_on_flag_flag[i]) {
+        // Sync logic mirrored from fixed-point voice_task, using float-derived clk_div and phase.
+        if (oscSync == 1) {
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+        }
+
+        if (oscSync > 1) {
+          const uint32_t sm_mask = (1u << sm1N) | (1u << sm2N);
+
+          pio_set_sm_mask_enabled(pioN_A, sm_mask, false);
+
+          pio_sm_clear_fifos(pioN_B, sm2N);
+          pio_sm_clear_fifos(pioN_A, sm1N);
+
+          uint32_t y_val2_u = (uint32_t)(y_val2_f + 0.5f);
+          pio_sm_put(pioN_B, sm2N, y_val2_u);
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_out(pio_y, 31));
+
+          pio_sm_put(pioN_A, sm1N, clk_div1);
+          pio_sm_put(pioN_B, sm2N, clk_div2);
+          pio_sm_exec(pioN_A, sm1N, pio_encode_pull(false, true));
+          pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, true));
+
+          pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
+          pio_sm_exec(pioN_B, sm2N, pio_encode_jmp(10 + offset[pioNumberB]));
+
+          pio_set_sm_mask_enabled(pioN_A, sm_mask, true);
+        }
+
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+      }
+  
+      if (timer99microsFlag) {
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_A], pwm_gpio_to_channel(RANGE_PINS[DCO_A]), chanLevel);
+        pwm_set_chan_level(RANGE_PWM_SLICES[DCO_B], pwm_gpio_to_channel(RANGE_PINS[DCO_B]), chanLevel2);
+  
+        if (sqr1Status) {
+  #ifdef RUNNING_AVERAGE
+          unsigned long t_pwm = micros();
+  #endif
+          float adsr1_delta = ((float)ADSR1Level[i] * (float)local_ADSR1toPWM) / 2048.0f; // 2^11
+          float lfo2_delta  = ((float)LFO2Level    * (float)local_LFO2toPW)   / 512.0f;   // 2^9
+          float pw_calc =
+              (float)DIV_COUNTER_PW - 1.0f
+            - (float)PW[0]
+            - lfo2_delta
+            + adsr1_delta;
+  
+          if (pw_calc < 0.0f) pw_calc = 0.0f;
+          if (pw_calc > (float)(DIV_COUNTER_PW - 1)) pw_calc = (float)(DIV_COUNTER_PW - 1);
+  
+          PW_PWM[i] = (uint16_t)lrintf(pw_calc);
+  #ifdef RUNNING_AVERAGE
+          ra_pwm_calculations.addValue((float)(micros() - t_pwm));
+  #endif
+          pwm_set_chan_level(PW_PWM_SLICES[i],
+                             pwm_gpio_to_channel(PW_PINS[i]),
+                             get_PW_level_interpolated(PW_PWM[i], i));
+        } else {
+          pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
+        }
+      }
+  
+      note_on_flag_flag[i] = false;
+    }
+  
+  #ifdef RUNNING_AVERAGE
+    unsigned long voice_task_duration = micros() - voice_task_start_time;
+    ra_voice_task_total.addValue((float)voice_task_duration);
+    if (voice_task_duration > voice_task_max_time) {
+      voice_task_max_time = voice_task_duration;
+    }
+  #endif
+
+  last_portamento_time = portaTime;
+  last_portamento_mode = portaMode;
+}
+#endif  // USE_FLOAT_VOICE_TASK
 
 inline void voice_task_simple() {
   for (int i = 0; i < NUM_VOICES; i++) {
@@ -963,12 +1471,6 @@ void setSyncMode() {
   }
 }
 
-static inline uint16_t get_chan_level_fast_from_float(float freqHz, uint8_t voiceN) {
-  if (freqHz <= 0.0f) return 0;
-  int32_t fx = (int32_t)(freqHz * (float)(1u << FREQ_FRAC_BITS) + 0.5f);
-  return get_chan_level_lookup_fast(fx, voiceN);
-}
-
 /**
  * @brief Fast amplitude compensation lookup tuned for the RP2040.
  *
@@ -978,7 +1480,7 @@ static inline uint16_t get_chan_level_fast_from_float(float freqHz, uint8_t voic
  * faster as it avoids processor pipeline stalls. The core calculation uses the proven,
  * numerically stable fixed-point quadratic method.
  */
-static inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
+inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
   static uint8_t lastWindow[NUM_OSCILLATORS] = { 0 };
 
   // --- 1. Load pointers to this oscillator's table rows (cache friendly) ---
@@ -1461,6 +1963,68 @@ inline int32_t interpolateRatioQ16_cached(int32_t xQ16, int dcoIndex) {
   int32_t ratioQ16 = (int32_t)((num * 0xD1B71759ULL) >> 45);
   return ratioQ16;
 }
+
+// Float ratio interpolator: same table/segment logic as interpolateRatioQ16_cached,
+// but operates directly in float "table units" and returns a float ratio.
+inline float interpolateRatioFloat_cached(float x, int dcoIndex) {
+  // Interpret x in same "table units" domain as xMultiplierTableF
+  // Clamp to bounds using float table values (mirrors integer path behaviour)
+  if (x <= xMultiplierTableF[0]) {
+    return yMultiplierTableF[0] / (float)multiplierTableScale;
+  }
+  if (x >= xMultiplierTableF[multiplierTableSize - 1]) {
+    return yMultiplierTableF[multiplierTableSize - 1] / (float)multiplierTableScale;
+  }
+
+  int low = interpSegCache[dcoIndex];
+
+  // Validate cache; adjust locally if possible
+  if (low < 0 || low > multiplierTableSize - 2 ||
+      !(xMultiplierTableF[low] <= x && x < xMultiplierTableF[low + 1])) {
+    // Try stepping toward correct segment
+    if (low >= 0 && low < multiplierTableSize - 1) {
+      if (x >= xMultiplierTableF[low + 1]) {
+        while (low < multiplierTableSize - 2 && x >= xMultiplierTableF[low + 1]) {
+          ++low;
+        }
+      } else if (x < xMultiplierTableF[low]) {
+        while (low > 0 && x < xMultiplierTableF[low]) {
+          --low;
+        }
+      }
+    }
+    // If still wrong, fall back to binary search
+    if (!(low >= 0 && low < multiplierTableSize - 1 &&
+          xMultiplierTableF[low] <= x && x < xMultiplierTableF[low + 1])) {
+      int l = 0;
+      int h = multiplierTableSize - 1;
+      while (l <= h) {
+        int m = (l + h) >> 1;
+        if (xMultiplierTableF[m] <= x && x < xMultiplierTableF[m + 1]) {
+          low = m;
+          break;
+        } else if (x < xMultiplierTableF[m]) {
+          h = m - 1;
+        } else {
+          l = m + 1;
+        }
+      }
+      if (low < 0) low = 0;
+      if (low > multiplierTableSize - 2) low = multiplierTableSize - 2;
+    }
+    interpSegCache[dcoIndex] = (int16_t)low;
+  }
+
+  // Linear interpolation in table units using precomputed float slopes
+  float x0 = xMultiplierTableF[low];
+  float y0 = yMultiplierTableF[low];
+  float m  = slopeF[low];                 // dy/dx as float
+  float yTab = y0 + m * (x - x0);         // table units
+
+  // Convert table units to ratio (same as yTab / multiplierTableScale)
+  float ratio = yTab / (float)multiplierTableScale;
+  return ratio;
+}
 void initMultiplierTables() {
 
   float y_value;
@@ -1507,6 +2071,15 @@ void initMultiplierTables() {
   }
   // Initialize per-DCO cache to invalid
   for (int d = 0; d < NUM_VOICES_TOTAL * 2; ++d) interpSegCache[d] = -1;
+
+  // Build float mirrors of multiplier tables and slopes for the float path.
+  for (int i = 0; i < multiplierTableSize; ++i) {
+    xMultiplierTableF[i] = (float)xMultiplierTable[i];
+    yMultiplierTableF[i] = (float)yMultiplierTable[i];
+  }
+  for (int i = 0; i < multiplierTableSize - 1; ++i) {
+    slopeF[i] = (float)slopeQ20[i] / (float)(1 << 20);  // Q20 -> float once at init
+  }
 }
 
 #ifdef RUNNING_AVERAGE
@@ -1569,58 +2142,81 @@ void print_voice_task_timings() {
   Serial.print(" avg, max ");
   Serial.println(voice_task_max_time);
 
+#ifdef CLKDIV_BENCHMARK
+  // Print clock-divider float vs double comparison stats
+  if (clkdiv_bench_count > 0) {
+    double avgFloatUs  = clkdiv_time_float_sum_us  / (double)clkdiv_bench_count;
+    double avgDoubleUs = clkdiv_time_double_sum_us / (double)clkdiv_bench_count;
+    double avgDelta1   = (double)clkdiv_delta1_sum / (double)clkdiv_bench_count;
+    double avgDelta2   = (double)clkdiv_delta2_sum / (double)clkdiv_bench_count;
+    double avgFreqDiff1 = clkdiv_freq1_diff_sum / (double)clkdiv_bench_count;
+    double avgFreqDiff2 = clkdiv_freq2_diff_sum / (double)clkdiv_bench_count;
+
+    Serial.println("=== CLKDIV BENCH ===");
+    Serial.print("count=");
+    Serial.print(clkdiv_bench_count);
+    Serial.print(" avgFloatUs=");
+    Serial.print(avgFloatUs, 3);
+    Serial.print(" avgDoubleUs=");
+    Serial.print(avgDoubleUs, 3);
+    Serial.println();
+
+    Serial.print("clk_div1 delta avg=");
+    Serial.print(avgDelta1, 3);
+    Serial.print(" maxAbs=");
+    Serial.print(clkdiv_delta1_max);
+    Serial.println();
+
+    Serial.print("clk_div2 delta avg=");
+    Serial.print(avgDelta2, 3);
+    Serial.print(" maxAbs=");
+    Serial.print(clkdiv_delta2_max);
+    Serial.println();
+
+    Serial.print("freq1 diff avg=");
+    Serial.print(avgFreqDiff1, 6);
+    Serial.print(" Hz maxAbs=");
+    Serial.print(clkdiv_freq1_diff_max_abs, 6);
+    Serial.println();
+
+    Serial.print("freq2 diff avg=");
+    Serial.print(avgFreqDiff2, 6);
+    Serial.print(" Hz maxAbs=");
+    Serial.print(clkdiv_freq2_diff_max_abs, 6);
+    Serial.println();
+
+    // Print example of last measured target vs output frequencies
+    Serial.print("OSC1 last: target=");
+    Serial.print(clkdiv_last_target1_Hz, 6);
+    Serial.print(" Hz float=");
+    Serial.print(clkdiv_last_out1_float_Hz, 6);
+    Serial.print(" Hz double=");
+    Serial.print(clkdiv_last_out1_double_Hz, 6);
+    Serial.println(" Hz");
+
+    Serial.print("OSC2 last: target=");
+    Serial.print(clkdiv_last_target2_Hz, 6);
+    Serial.print(" Hz float=");
+    Serial.print(clkdiv_last_out2_float_Hz, 6);
+    Serial.print(" Hz double=");
+    Serial.print(clkdiv_last_out2_double_Hz, 6);
+    Serial.println(" Hz");
+    Serial.println("====================");
+
+    // Reset accumulators
+    clkdiv_bench_count         = 0;
+    clkdiv_time_float_sum_us  = 0.0;
+    clkdiv_time_double_sum_us = 0.0;
+    clkdiv_delta1_sum = clkdiv_delta2_sum = 0;
+    clkdiv_delta1_max = clkdiv_delta2_max = 0;
+    clkdiv_freq1_diff_sum = clkdiv_freq2_diff_sum = 0.0;
+    clkdiv_freq1_diff_max_abs = clkdiv_freq2_diff_max_abs = 0.0;
+  }
+#endif
+
   Serial.println("===================================================\n");
 }
 #endif
-
-static void amp_comp_debug_window(int32_t x, uint8_t voiceN) {
-  int window = 0;
-  for (int k = 0; k < ampCompTableSize - 2; ++k) {
-    if (ampCompFrequencyArray[voiceN][k] <= x && x <= ampCompFrequencyArray[voiceN][k + 2]) {
-      window = k;
-      break;
-    }
-  }
-  if (window < 0) window = 0;
-  if (window > ampCompTableSize - 3) window = ampCompTableSize - 3;
-
-  int32_t x0 = ampCompFrequencyArray[voiceN][window];
-  int32_t x1 = ampCompFrequencyArray[voiceN][window + 1];
-  int32_t x2 = ampCompFrequencyArray[voiceN][window + 2];
-  uint16_t y0 = ampCompArray[voiceN][window];
-  uint16_t y1 = ampCompArray[voiceN][window + 1];
-  uint16_t y2 = ampCompArray[voiceN][window + 2];
-  bool useDouble = useDoubleWindow[voiceN][window];
-  double aD = aCoeffD[voiceN][window];
-  double bD = bCoeffD[voiceN][window];
-  double cD = cCoeffD[voiceN][window];
-
-  Serial.print("[AMPWINDBG] v=");
-  Serial.print(voiceN);
-  Serial.print(" win=");
-  Serial.print(window);
-  Serial.print(" useDouble=");
-  Serial.print(useDouble ? "1" : "0");
-  Serial.print(" x0=");
-  Serial.print(x0);
-  Serial.print(" x1=");
-  Serial.print(x1);
-  Serial.print(" x2=");
-  Serial.print(x2);
-  Serial.print(" y0=");
-  Serial.print(y0);
-  Serial.print(" y1=");
-  Serial.print(y1);
-  Serial.print(" y2=");
-  Serial.print(y2);
-  Serial.print(" aD=");
-  Serial.print(aD, 6);
-  Serial.print(" bD=");
-  Serial.print(bD, 6);
-  Serial.print(" cD=");
-  Serial.print(cD, 6);
-  Serial.println();
-}
 
 inline void voice_task_gold_reference() {
   for (int i = 0; i < NUM_VOICES; i++) {
@@ -1745,4 +2341,32 @@ inline void voice_task_gold_reference() {
 
     note_on_flag_flag[i] = false;
   }
+}
+
+
+// Uses non linear interpolation and coefficients
+inline uint16_t get_chan_level_lookup_original(int32_t x, uint8_t voiceN) {
+  // Note: Timing is measured at the call site in voice_task() for total lookup time
+  // This includes both OSC1 and OSC2 lookups per voice iteration
+
+  // Check if x is out of bounds
+  if (x <= ampCompFrequencyArray[voiceN][0]) {
+    return ampCompArray[voiceN][0];
+  }
+  if (x >= ampCompFrequencyArray[voiceN][ampCompTableSize - 1]) {
+    return ampCompArray[voiceN][ampCompTableSize - 1];
+  }
+
+  // Find the interval x is in and use the precomputed coefficients
+  for (int i = 0; i < ampCompTableSize - 2; i++) {
+    if (ampCompFrequencyArray[voiceN][i] <= x && x < ampCompFrequencyArray[voiceN][i + 2]) {
+      // Calculate the interpolated value using the precomputed coefficients
+      float interpolatedValue = aCoeff[voiceN][i] * x * x + bCoeff[voiceN][i] * x + cCoeff[voiceN][i];
+
+      // Round the result to the nearest integer
+      return round(interpolatedValue);
+    }
+  }
+  // If no interval is found (should not happen), return 0
+  return 0;
 }

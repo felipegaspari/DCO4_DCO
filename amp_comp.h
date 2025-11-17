@@ -5,52 +5,49 @@
 #include <math.h>
 #include <limits.h>
 
-static constexpr int ampCompTableSize = 22;
-// Windows with steep slopes (upper band) evaluated in double precision
-static constexpr int AMP_COMP_DOUBLE_WINDOW_START = ampCompTableSize - 10;
-// Frequency values for amplitude compensation are stored as fixed-point Hz (Q(FREQ_FRAC_BITS))
-static constexpr int FREQ_FRAC_BITS = 8;
-static constexpr int32_t AMP_COMP_SENTINEL_FREQ_Q = 50000000; // sentinel marker from FS data (Q8)
-// Maximum frequency (Hz) for which we apply amplitude compensation.
-// At or above this frequency, get_chan_level() returns full scale (DIV_COUNTER).
-static constexpr int32_t AMP_COMP_MAX_HZ = 7000;
-static constexpr int32_t AMP_COMP_MAX_HZ_Q = (int32_t)(AMP_COMP_MAX_HZ << FREQ_FRAC_BITS);
-
-static constexpr int AMP_COMP_FAST_T_FRAC = 13;
-static constexpr int AMP_COMP_FAST_RECIP_EXTRA = 12;
-static constexpr int AMP_COMP_FAST_COEFF_FRAC = 5;
-static constexpr int AMP_COMP_FAST_SHIFT = AMP_COMP_FAST_COEFF_FRAC + AMP_COMP_FAST_T_FRAC;
-static constexpr int AMP_COMP_FAST_SLOPE_FRAC = 12;
+// Common table dimensions and shared data
+static constexpr int     ampCompTableSize = 22;
+static constexpr int32_t AMP_COMP_MAX_HZ  = 7000;
 
 int32_t freq_to_amp_comp_array[352];
-uint8_t ampCompArraySize = FSVoiceDataSize / 4;
-
-int32_t ampCompFrequencyArray[NUM_OSCILLATORS][ampCompTableSize + 1];
 int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize + 1];
+bool    plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
 
-// High-precision float coefficients (original model): y = a*x^2 + b*x + c
-float aCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
-float bCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
-float cCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
-double aCoeffD[NUM_OSCILLATORS][ampCompTableSize - 1];
-double bCoeffD[NUM_OSCILLATORS][ampCompTableSize - 1];
-double cCoeffD[NUM_OSCILLATORS][ampCompTableSize - 1];
-bool useDoubleWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
-bool plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
+// ----- Fixed-point (Q8) amp-comp data, used only when !USE_FLOAT_AMP_COMP -----
+#ifndef USE_FLOAT_AMP_COMP
+
+// Frequency values for amplitude compensation are stored as fixed-point Hz (Q(FREQ_FRAC_BITS)).
+static constexpr int     FREQ_FRAC_BITS    = 8;
+static constexpr int32_t AMP_COMP_SENTINEL_FREQ_Q = 50000000; // sentinel marker from FS data (Q8)
+static constexpr int32_t AMP_COMP_MAX_HZ_Q = (int32_t)(AMP_COMP_MAX_HZ << FREQ_FRAC_BITS);
+
+int32_t  ampCompFrequencyArray[NUM_OSCILLATORS][ampCompTableSize + 1]; // Q8 Hz
 
 // Per-window normalized quadratic in t = (x - x0) / (x2 - x0), where x,x0,x2 are integer Hz.
 // Runtime uses 32-bit fixed-point t (Q(T_FRAC)) and precomputed integer coefficients.
-static constexpr int T_FRAC = 12;
-int32_t xBaseWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
-int32_t dxWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
+static constexpr int     T_FRAC           = 12;
+int32_t  xBaseWIN   [NUM_OSCILLATORS][ampCompTableSize - 1];
+int32_t  dxWIN      [NUM_OSCILLATORS][ampCompTableSize - 1];
 // Use Q28 reciprocal to avoid underflow on very large dx while keeping shifts small
 uint32_t invDxWIN_q28[NUM_OSCILLATORS][ampCompTableSize - 1];
-int64_t aQWIN[NUM_OSCILLATORS][ampCompTableSize - 1]; // Q(T_FRAC) wide
-int64_t bQWIN[NUM_OSCILLATORS][ampCompTableSize - 1]; // Q(T_FRAC) wide
-uint16_t cQWIN[NUM_OSCILLATORS][ampCompTableSize - 1];
-int32_t aQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 1];
-int32_t bQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 1];
-// (removed legacy 32-bit-only fast-path parameters and integer coeffs)
+int64_t  aQWIN      [NUM_OSCILLATORS][ampCompTableSize - 1]; // Q(T_FRAC)
+int64_t  bQWIN      [NUM_OSCILLATORS][ampCompTableSize - 1]; // Q(T_FRAC)
+uint16_t cQWIN      [NUM_OSCILLATORS][ampCompTableSize - 1];
+int32_t  aQWIN_fast [NUM_OSCILLATORS][ampCompTableSize - 1];
+int32_t  bQWIN_fast [NUM_OSCILLATORS][ampCompTableSize - 1];
+
+#endif // !USE_FLOAT_AMP_COMP
+
+// High-precision float coefficients (Hz-domain): y = a*x^2 + b*x + c
+// Used by both fixed-point (for reference) and float amp-comp paths.
+float    aCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
+float    bCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
+float    cCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
+
+// Float-domain frequency breakpoints (Hz) used only by the float amp-comp path.
+#ifdef USE_FLOAT_AMP_COMP
+float    ampCompFrequencyHz[NUM_OSCILLATORS][ampCompTableSize + 1];
+#endif
 
 
 /**
@@ -64,6 +61,9 @@ int32_t bQWIN_fast[NUM_OSCILLATORS][ampCompTableSize - 1];
  * 3.  Computes the complete, consistent data package (base, width, reciprocal, and
  *     normalized coefficients) needed for the fast fixed-point quadratic calculation.
  */
+// Fixed-point precompute: builds Q-format tables for the fixed engine.
+// Only compiled when the float amp-comp engine is not in use.
+#ifndef USE_FLOAT_AMP_COMP
 static void precomputeCoefficients() {
   static_assert(T_FRAC > 0 && T_FRAC < 28, "T_FRAC must be in a valid range for the math to work.");
 
@@ -78,9 +78,6 @@ static void precomputeCoefficients() {
   const double freqScale    = (double)(1u << FREQ_FRAC_BITS);
   const double invFreqScale = 1.0 / freqScale;
   const double maxFreqHz    = (double)AMP_COMP_MAX_HZ;
-  const int32_t maxFreqQ    = AMP_COMP_MAX_HZ_Q;
-  const uint32_t fastRecipNumerator = (uint32_t)1 << (AMP_COMP_FAST_T_FRAC + AMP_COMP_FAST_RECIP_EXTRA);
-  const int fastCoeffShift = AMP_COMP_FAST_COEFF_FRAC + AMP_COMP_FAST_T_FRAC;
 
   for (int j = 0; j < NUM_OSCILLATORS; j++) {
     for (int i = 0; i < ampCompTableSize - 1; ++i) {
@@ -128,9 +125,6 @@ static void precomputeCoefficients() {
       aCoeff[j][i] = (float)aVal_ld;
       bCoeff[j][i] = (float)bVal_ld;
       cCoeff[j][i] = (float)cVal_ld;
-      aCoeffD[j][i] = (double)aVal_ld;
-      bCoeffD[j][i] = (double)bVal_ld;
-      cCoeffD[j][i] = (double)cVal_ld;
 
       long double dx02_ld = (long double)x2_f - (long double)x0_f;
       if (dx02_ld <= 0.0L) dx02_ld = 1.0L;
@@ -176,109 +170,191 @@ static void precomputeCoefficients() {
       if (bFastLL > (int64_t)INT32_MAX) bFastLL = (int64_t)INT32_MAX;
       if (bFastLL < (int64_t)INT32_MIN) bFastLL = (int64_t)INT32_MIN;
       bQWIN_fast[j][i] = (int32_t)bFastLL;
-
-      useDoubleWindow[j][i] = false;
     }
   }
 }
+#endif  // !USE_FLOAT_AMP_COMP
 
-// Function to precompute the coefficients
-void precomputeCoefficients_OLD() {
-  for (int j = 0; j < NUM_OSCILLATORS; j++) {
-    // Precompute precise float quadratic coefficients (original model)
-    for (int i = 0; i < ampCompTableSize - 1; i++) {
-      // Detect sentinel points and synthesize a reasonable third point near the cap
-      if (ampCompFrequencyArray[j][i + 1] >= AMP_COMP_SENTINEL_FREQ_Q) {
-        ampCompFrequencyArray[j][i + 1] = AMP_COMP_MAX_HZ_Q;
-        ampCompArray[j][i + 1] = ampCompArray[j][i];
-      }
-      if (ampCompFrequencyArray[j][i + 2] >= AMP_COMP_SENTINEL_FREQ_Q) {
-        int32_t f0 = ampCompFrequencyArray[j][i];
-        int32_t f1 = ampCompFrequencyArray[j][i + 1];
-        int32_t step = f1 - f0;
-        if (step <= 0) step = (AMP_COMP_MAX_HZ_Q - f1);
-        if (step <= 0) step = 1;
-        int32_t synthetic = f1 + step;
-        if (synthetic > AMP_COMP_MAX_HZ_Q) synthetic = AMP_COMP_MAX_HZ_Q;
-        ampCompFrequencyArray[j][i + 2] = synthetic;
-        ampCompArray[j][i + 2] = ampCompArray[j][i + 1];
-      }
-      // Detect onset of plateau (multiple consecutive DIV_COUNTER values)
-      bool plateauWin = (ampCompArray[j][i + 1] >= DIV_COUNTER && ampCompArray[j][i + 2] >= DIV_COUNTER);
+/**
+ * @brief Float-only variant of amplitude compensation precompute.
+ *
+ * This version prepares only the data needed by the pure-float amp-comp path:
+ *  - Sanitises ampCompFrequencyHz / ampCompArray (sentinels, plateaus).
+ *  - Computes float quadratic coefficients aCoeff/bCoeff/cCoeff in Hz domain.
+ *  - Fills ampCompFrequencyHz (sanitised breakpoints in Hz).
+ *
+ * It intentionally skips all fixed-point specific structures (xBaseWIN, dxWIN,
+ * invDxWIN_q28, aQWIN, bQWIN, cQWIN, aQWIN_fast, bQWIN_fast) so the float engine
+ * can be built without any fixed-point amp-comp math if desired.
+ */
+// Float-only precompute: prepares Hz-domain tables for the float engine.
+// Float-only precompute: prepares Hz-domain tables for the float engine.
+#ifdef USE_FLOAT_AMP_COMP
+static void precomputeCoefficients_float() {
+  // Ensure each table has a final point at the defined maximum in Hz.
+  for (int j = 0; j < NUM_OSCILLATORS; ++j) {
+    ampCompFrequencyHz[j][ampCompTableSize] = (float)AMP_COMP_MAX_HZ;
+    ampCompArray[j][ampCompTableSize]       = DIV_COUNTER;
+  }
 
-      double x0f = (double)ampCompFrequencyArray[j][i]     / (double)(1u << FREQ_FRAC_BITS);
-      double x1f = (double)ampCompFrequencyArray[j][i + 1] / (double)(1u << FREQ_FRAC_BITS);
-      double x2f = (double)ampCompFrequencyArray[j][i + 2] / (double)(1u << FREQ_FRAC_BITS);
-      double y0f = (double)ampCompArray[j][i];
-      double y1f = (double)ampCompArray[j][i + 1];
-      double y2f = (double)ampCompArray[j][i + 2];
+  const double maxFreqHz = (double)AMP_COMP_MAX_HZ;
 
-      if (plateauWin) {
-        double xCap = (double)AMP_COMP_MAX_HZ;
-        double xMid = (x0f + xCap) * 0.5;
-        double yMid = (y0f + (double)DIV_COUNTER) * 0.5;
-        ampCompFrequencyArray[j][i + 1] = (int32_t)llround(xMid * (double)(1u << FREQ_FRAC_BITS));
-        ampCompArray[j][i + 1] = (uint16_t)llround(yMid);
-        ampCompFrequencyArray[j][i + 2] = AMP_COMP_MAX_HZ_Q;
-        ampCompArray[j][i + 2] = (uint16_t)DIV_COUNTER;
-        x1f = xMid;
-        x2f = xCap;
-        y1f = yMid;
-        y2f = (double)DIV_COUNTER;
+  for (int j = 0; j < NUM_OSCILLATORS; ++j) {
+    for (int i = 0; i < ampCompTableSize - 1; ++i) {
+      // Work directly in Hz domain using the float frequency table.
+      double x0_f = (double)ampCompFrequencyHz[j][i];
+      double x1_f = (double)ampCompFrequencyHz[j][i + 1];
+      double x2_f = (double)ampCompFrequencyHz[j][i + 2];
+      double y0_f = (double)ampCompArray[j][i];
+      double y1_f = (double)ampCompArray[j][i + 1];
+      double y2_f = (double)ampCompArray[j][i + 2];
+
+      // Clamp any out-of-band/sentinel frequencies to the defined maximum.
+      if (x1_f >= maxFreqHz) x1_f = maxFreqHz;
+      if (x2_f >= maxFreqHz) x2_f = maxFreqHz;
+
+      // Plateau smoothing: if both subsequent points are at/beyond full scale,
+      // synthesise a smooth transition into the plateau and update the tables.
+      if (y1_f >= DIV_COUNTER && y2_f >= DIV_COUNTER) {
+        double plateau_end_y = (double)DIV_COUNTER;
+        x1_f = (x0_f + maxFreqHz) * 0.5;
+        y1_f = (y0_f + plateau_end_y) * 0.5;
+        x2_f = maxFreqHz;
+        y2_f = plateau_end_y;
+
+        ampCompFrequencyHz[j][i + 1] = (float)x1_f;
+        ampCompArray[j][i + 1]       = (uint16_t)llround(y1_f);
+        ampCompFrequencyHz[j][i + 2] = (float)maxFreqHz;
+        ampCompArray[j][i + 2]       = (uint16_t)DIV_COUNTER;
       }
-      // Solve for a, b, c in y = a*x^2 + b*x + c using three points
-      double denom = (x0f - x1f) * (x0f - x2f) * (x1f - x2f);
-      if (denom == 0.0) denom = 1.0;
-      double aVal = (x2f * (y1f - y0f) + x1f * (y0f - y2f) + x0f * (y2f - y1f)) / denom;
-      double bVal = (x2f * x2f * (y0f - y1f) + x1f * x1f * (y2f - y0f) + x0f * x0f * (y1f - y2f)) / denom;
-      double cVal = (x1f * x2f * (x1f - x2f) * y0f + x2f * x0f * (x2f - x0f) * y1f + x0f * x1f * (x0f - x1f) * y2f) / denom;
-      aCoeff[j][i] = (float)aVal;
-      bCoeff[j][i] = (float)bVal;
-      cCoeff[j][i] = (float)cVal;
-      aCoeffD[j][i] = aVal;
-      bCoeffD[j][i] = bVal;
-      cCoeffD[j][i] = cVal;
-      double slopeSpan = fabs((y2f - y0f) / (x2f - x0f));
-      useDoubleWindow[j][i] =
-        (fabs(aCoeffD[j][i]) > 1e6) ||
-        (fabs(bCoeffD[j][i]) > 1e3) ||
-        (slopeSpan > 0.4);
+
+      // Mark plateau windows for fast runtime clamping in both paths.
+      plateauWindow[j][i] = (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
+                             ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
+
+      // Compute float quadratic coefficients y = a*x^2 + b*x + c in Hz domain.
+      long double denom_ld =
+        (long double)(x0_f - x1_f) * (long double)(x0_f - x2_f) * (long double)(x1_f - x2_f);
+      if (denom_ld == 0.0L) denom_ld = 1.0L;
+      long double inv_denom_ld = 1.0L / denom_ld;
+
+      long double aVal_ld = ((long double)x2_f * (long double)(y1_f - y0_f) +
+                             (long double)x1_f * (long double)(y0_f - y2_f) +
+                             (long double)x0_f * (long double)(y2_f - y1_f)) * inv_denom_ld;
+      long double bVal_ld = ((long double)x2_f * (long double)x2_f * (long double)(y0_f - y1_f) +
+                             (long double)x1_f * (long double)x1_f * (long double)(y2_f - y0_f) +
+                             (long double)x0_f * (long double)x0_f * (long double)(y1_f - y2_f)) * inv_denom_ld;
+      long double cVal_ld = ((long double)x1_f * (long double)x2_f * (long double)(x1_f - x2_f) * (long double)y0_f +
+                             (long double)x2_f * (long double)x0_f * (long double)(x2_f - x0_f) * (long double)y1_f +
+                             (long double)x0_f * (long double)x1_f * (long double)(x0_f - x1_f) * (long double)y2_f) * inv_denom_ld;
+
+      aCoeff[j][i] = (float)aVal_ld;
+      bCoeff[j][i] = (float)bVal_ld;
+      cCoeff[j][i] = (float)cVal_ld;
+
+      // Store the left breakpoint in Hz for this window (kept in sync with any smoothing).
+      ampCompFrequencyHz[j][i] = (float)x0_f;
     }
-    // Precompute per-window normalized quadratic coefficients (32-bit runtime)
-    for (int i = 0; i < ampCompTableSize - 1; i++) {
-      double x0f = (double)ampCompFrequencyArray[j][i]     / (double)(1u << FREQ_FRAC_BITS);
-      double x1f = (double)ampCompFrequencyArray[j][i + 1] / (double)(1u << FREQ_FRAC_BITS);
-      double x2f = (double)ampCompFrequencyArray[j][i + 2] / (double)(1u << FREQ_FRAC_BITS);
-      double y0f = (double)ampCompArray[j][i];
-      double y1f = (double)ampCompArray[j][i + 1];
-      double y2f = (double)ampCompArray[j][i + 2];
-      double dx02f = x2f - x0f;
-      if (dx02f == 0.0) dx02f = 1.0;
-      double t1 = (x1f - x0f) / dx02f; // in (0,1)
-      double d20 = y2f - y0f;
-      double d10 = y1f - y0f;
-      double denom = (t1 * t1 - t1);
-      if (denom == 0.0) denom = 1.0;
-      double aN = (d10 - d20 * t1) / denom;
-      double bN = d20 - aN;
-      // Store for runtime 32-bit evaluation
-      xBaseWIN[j][i] = (int32_t)ampCompFrequencyArray[j][i];
-      dxWIN[j][i] = (int32_t)(ampCompFrequencyArray[j][i + 2] - ampCompFrequencyArray[j][i]);
-      if (dxWIN[j][i] == 0) dxWIN[j][i] = 1;
-      // Reciprocal of dx in Q28 for fast t computation without underflow
-      invDxWIN_q28[j][i] = (uint32_t)llround((double)268435456.0 / (double)dxWIN[j][i]); // 2^28 / dx
-      // Coefficients in Q(T_FRAC) for 32-bit eval (stored as int32_t, no saturation)
-      aQWIN[j][i] = (int64_t)llround((double)aN * (double)(1LL << T_FRAC));
-      bQWIN[j][i] = (int64_t)llround((double)bN * (double)(1LL << T_FRAC));
-      // (removed legacy shift/scale and integer coeff precompute)
-      // c in y units, clamp to valid range
-      int32_t ctmp = (int32_t)lrintf(y0f);
-      if (ctmp < 0) ctmp = 0;
-      if (ctmp > (int32_t)DIV_COUNTER) ctmp = DIV_COUNTER;
-      cQWIN[j][i] = (uint16_t)ctmp;
-    }
+
+    // The final breakpoint (ampCompTableSize) in Hz has already been initialised to AMP_COMP_MAX_HZ.
   }
 }
+#endif  // USE_FLOAT_AMP_COMP
+
+
+// ---------------------------------------------------------------------------
+// Engine-agnostic amp-comp API
+// ---------------------------------------------------------------------------
+// These helpers let the rest of the code call a single precompute/lookup API,
+// while the concrete implementation is selected at compile time.
+
+// Dispatch to the correct precompute routine based on the active amp-comp mode.
+static inline void precompute_amp_comp_for_engine() {
+#ifdef USE_FLOAT_AMP_COMP
+  precomputeCoefficients_float();
+#else
+  precomputeCoefficients();
+#endif
+}
+
+// Unified lookup facade: always take frequency in Hz, choose implementation at compile time.
+// The concrete implementations are defined just below.
+static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN);
+
+#ifndef USE_FLOAT_AMP_COMP
+// Forward declaration for the fixed-point fast lookup implemented in voices.ino
+inline uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN);
+#endif
+
+#ifdef USE_FLOAT_AMP_COMP
+// Pure-float amplitude compensation lookup for the RP2350/float voice path.
+// Uses sanitized float-domain frequency table (Hz) and precomputed quadratic coefficients,
+// with the same plateau handling and window layout as the fixed-point path.
+static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN) {
+  if (freqHz <= 0.0f) return 0;
+
+  const float*   freqRow    = ampCompFrequencyHz[voiceN];
+  const int32_t* ampRow     = ampCompArray[voiceN];
+  const bool*    plateauRow = plateauWindow[voiceN];
+
+  // Boundary conditions in Hz
+  if (freqHz <= freqRow[0]) {
+    int32_t y0 = ampRow[0];
+    if (y0 < 0) y0 = 0;
+    if (y0 > (int32_t)DIV_COUNTER) y0 = (int32_t)DIV_COUNTER;
+    return (uint16_t)y0;
+  }
+  const int lastIdx = ampCompTableSize;
+  if (freqHz >= freqRow[lastIdx]) {
+    int32_t yN = ampRow[lastIdx];
+    if (yN < 0) yN = 0;
+    if (yN > (int32_t)DIV_COUNTER) yN = (int32_t)DIV_COUNTER;
+    return (uint16_t)yN;
+  }
+
+  // Cached window search (per oscillator)
+  static uint8_t lastWindowFloat[NUM_OSCILLATORS] = { 0 };
+  int window = lastWindowFloat[voiceN];
+  const int maxWindow = ampCompTableSize - 2;
+  if (window > maxWindow) window = maxWindow;
+
+  while (window > 0 && freqHz < freqRow[window]) {
+    --window;
+  }
+  while (window < maxWindow && freqHz > freqRow[window + 2]) {
+    ++window;
+  }
+  lastWindowFloat[voiceN] = (uint8_t)window;
+
+  // Plateau handling: if we are in a plateau window and past the mid point, drive full scale.
+  if (plateauRow[window] && freqHz >= freqRow[window + 1]) {
+    return (uint16_t)DIV_COUNTER;
+  }
+
+  float a = aCoeff[voiceN][window];
+  float b = bCoeff[voiceN][window];
+  float c = cCoeff[voiceN][window];
+
+  float y = (a * freqHz + b) * freqHz + c;
+  int32_t yi = (int32_t)lrintf(y);
+  if (yi < 0) yi = 0;
+  if (yi > (int32_t)DIV_COUNTER) yi = (int32_t)DIV_COUNTER;
+
+  return (uint16_t)yi;
+}
+#else
+// Fixed-point engine: convert Hz to Q(FREQ_FRAC_BITS) and use the fast fixed-point lookup.
+static inline uint16_t get_chan_level_for_engine(float freqHz, uint8_t voiceN) {
+  if (freqHz <= 0.0f) return 0;
+  if (freqHz >= (float)AMP_COMP_MAX_HZ) {
+    return get_chan_level_lookup_fast(AMP_COMP_MAX_HZ_Q, voiceN);
+  }
+
+  int32_t x_q = (int32_t)lrintf(freqHz * (float)(1 << FREQ_FRAC_BITS));
+  return get_chan_level_lookup_fast(x_q, voiceN);
+}
+#endif
+
 
 
 // #else
