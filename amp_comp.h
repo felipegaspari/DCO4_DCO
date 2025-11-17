@@ -10,11 +10,13 @@ static constexpr int     ampCompTableSize = 22;
 static constexpr int32_t AMP_COMP_MAX_HZ  = 7000;
 
 int32_t freq_to_amp_comp_array[352];
-int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize + 1];
+
 bool    plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
 
 // ----- Fixed-point (Q8) amp-comp data, used only when !USE_FLOAT_AMP_COMP -----
 #ifndef USE_FLOAT_AMP_COMP
+
+int32_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize + 1];
 
 // Frequency values for amplitude compensation are stored as fixed-point Hz (Q(FREQ_FRAC_BITS)).
 static constexpr int     FREQ_FRAC_BITS    = 8;
@@ -46,6 +48,7 @@ float    cCoeff[NUM_OSCILLATORS][ampCompTableSize - 1];
 
 // Float-domain frequency breakpoints (Hz) used only by the float amp-comp path.
 #ifdef USE_FLOAT_AMP_COMP
+uint16_t ampCompArray[NUM_OSCILLATORS][ampCompTableSize + 1];    
 float    ampCompFrequencyHz[NUM_OSCILLATORS][ampCompTableSize + 1];
 #endif
 
@@ -64,6 +67,7 @@ float    ampCompFrequencyHz[NUM_OSCILLATORS][ampCompTableSize + 1];
 // Fixed-point precompute: builds Q-format tables for the fixed engine.
 // Only compiled when the float amp-comp engine is not in use.
 #ifndef USE_FLOAT_AMP_COMP
+
 static void precomputeCoefficients() {
   static_assert(T_FRAC > 0 && T_FRAC < 28, "T_FRAC must be in a valid range for the math to work.");
 

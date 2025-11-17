@@ -1564,16 +1564,10 @@ uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
 inline uint16_t get_chan_level_float(float freqHz, uint8_t voiceN) {
   // Boundary conditions in Hz (direct table access for minimum overhead)
   if (freqHz <= ampCompFrequencyHz[voiceN][0]) {
-    int32_t y0 = ampCompArray[voiceN][0];
-    if (y0 < 0) y0 = 0;
-    if (y0 > (int32_t)DIV_COUNTER) y0 = (int32_t)DIV_COUNTER;
-    return (uint16_t)y0;
+    return ampCompArray[voiceN][0];
   }
   if (freqHz >= ampCompFrequencyHz[voiceN][ampCompTableSize - 1]) {
-    int32_t yN = ampCompArray[voiceN][ampCompTableSize - 1];
-    if (yN < 0) yN = 0;
-    if (yN > (int32_t)DIV_COUNTER) yN = (int32_t)DIV_COUNTER;
-    return (uint16_t)yN;
+    return ampCompArray[voiceN][ampCompTableSize - 1];
   }
 
   // Linear scan over small table (same structure as original float version),
@@ -1593,14 +1587,10 @@ inline uint16_t get_chan_level_float(float freqHz, uint8_t voiceN) {
       float b = bCoeff[voiceN][i];
       float c = cCoeff[voiceN][i];
 
-      float y = (a * freqHz + b) * freqHz + c;
-      int32_t yi = (int32_t)lrintf(y);
-      if (yi < 0) yi = 0;
-      if (yi > (int32_t)DIV_COUNTER) yi = (int32_t)DIV_COUNTER;
-      return (uint16_t)yi;
+      float interpolatedValue = (a * freqHz + b) * freqHz + c;
+      return round(interpolatedValue);
     }
   }
-
   // Fallback (should not happen if tables are well-formed)
   return 0;
 }
