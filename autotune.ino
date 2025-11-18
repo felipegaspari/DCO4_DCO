@@ -111,7 +111,7 @@ void DCO_calibration() {
       // For each voice (even-indexed DCO), calibrate PW center, low limit,
       // and high limit using the shared PW search routines.
       // Mode 0 = low note PW center (used for both limits as well).
-      find_PW_center(0);
+        find_PW_center(0);
       find_PW_low_limit();
       find_PW_high_limit();
 
@@ -125,6 +125,9 @@ void DCO_calibration() {
       DCO_calibration_current_note = DCO_calibration_start_note;
       VOICE_NOTES[0] = DCO_calibration_current_note;
     }
+
+    DCO_calibration_current_note = DCO_calibration_start_note;
+    VOICE_NOTES[0] = DCO_calibration_current_note;
 
     // uint16_t lowestFrequency = find_lowest_freq();
     // calibrationData[0] = lowestFrequency;
@@ -234,6 +237,19 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
   PIDMinGapCounter = 0;
   pulseCounter = 0;
 
+  // Fixed-size tables for valid and invalid samples.
+  // Valid samples: store (PW, gapDiff = gap - gapTarget).
+  // Invalid samples: store (PW, distance in PW units to the nearest valid sample).
+  const int kMaxSamples = 40;
+  uint16_t validPW[kMaxSamples];
+  double   validGapDiff[kMaxSamples];
+  int      validCount = 0;
+  int      inToleranceCount = 0;  // Number of valid samples within target gap
+
+  uint16_t invalidPW[kMaxSamples];
+  uint16_t invalidDistToValid[kMaxSamples];
+  int      invalidCount = 0;
+
   // Precompute period and duty-cycle tolerance (in %) for debug reporting.
   double freqHz = (double)sNotePitches[DCO_calibration_current_note - 12];
   double periodUs = (freqHz > 0.0) ? (1000000.0 / freqHz) : 0.0;
@@ -247,7 +263,10 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
   }
 
   // ---- Phase 1: Coarse scan over PW range to find a sign-change bracket ----
-  uint16_t coarseStep = (pwMax > pwMin) ? ((pwMax - pwMin) / 16) : 1;
+  // Use smaller coarse steps for low/high limit searches (target duty far from 50%)
+  // and larger steps for center search (targetDutyFraction ~ 0.5).
+  uint16_t coarseDiv = (fabs(targetDutyFraction - 0.5) < 0.05) ? 16 : 32;
+  uint16_t coarseStep = (pwMax > pwMin) ? ((pwMax - pwMin) / coarseDiv) : 1;
   if (coarseStep == 0) coarseStep = 1;
 
   bool havePrev = false;
@@ -272,7 +291,40 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
 
     GapMeasurement gm = measure_gap(2);
     if (gm.timedOut) {
-      continue;  // no usable signal at this PW
+      // No usable signal at this PW; if we have at least one valid sample,
+      // track this as an invalid entry near some valid PW for diagnostic use.
+      if (validCount > 0 && invalidCount < kMaxSamples) {
+        // Compute distance to nearest valid PW.
+        uint16_t bestDist = 0xFFFF;
+        for (int vi = 0; vi < validCount; ++vi) {
+          uint16_t dist = (validPW[vi] > pw) ? (validPW[vi] - pw) : (pw - validPW[vi]);
+          if (dist < bestDist) bestDist = dist;
+        }
+        invalidPW[invalidCount] = pw;
+        invalidDistToValid[invalidCount] = bestDist;
+        invalidCount++;
+      } else if (validCount > 0 && invalidCount >= kMaxSamples) {
+        // Table full: only keep invalids that are closer to valids than the current worst.
+        uint16_t bestDist = 0xFFFF;
+        for (int vi = 0; vi < validCount; ++vi) {
+          uint16_t dist = (validPW[vi] > pw) ? (validPW[vi] - pw) : (pw - validPW[vi]);
+          if (dist < bestDist) bestDist = dist;
+        }
+        // Find worst (largest distance) invalid entry.
+        int worstIdx = 0;
+        uint16_t worstDist = invalidDistToValid[0];
+        for (int ii = 1; ii < invalidCount; ++ii) {
+          if (invalidDistToValid[ii] > worstDist) {
+            worstDist = invalidDistToValid[ii];
+            worstIdx = ii;
+          }
+        }
+        if (bestDist < worstDist) {
+          invalidPW[worstIdx] = pw;
+          invalidDistToValid[worstIdx] = bestDist;
+        }
+      }
+      continue;  // skip invalid sample
     }
 
     double gap = (double)gm.value;
@@ -282,15 +334,41 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
     if (autotuneDebug >= 2 && periodUs > 0.0) {
       double dutyErrorFrac = -gap / (2.0 * periodUs);
       double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
-      Serial.println((String)"PW coarse: PW=" + pw +
+      Serial.println((String)"[PW_CENTER_COARSE] PW=" + pw +
                      (String)" gap=" + gap +
                      (String)"us duty=" + dutyPercent +
-                     (String)"% tolDuty≈" + toleranceDutyPercent + "%");
+                     (String)"% tolDuty~" + toleranceDutyPercent + "%");
+    }
+
+    if (absGapDiff <= (double)targetGap) {
+      inToleranceCount++;
     }
 
     if (absGapDiff < bestGap) {
       bestGap = absGapDiff;
       bestCandidate = pw;
+    }
+
+    // Maintain table of best valid samples.
+    if (validCount < kMaxSamples) {
+      validPW[validCount] = pw;
+      validGapDiff[validCount] = gapDiff;
+      validCount++;
+    } else {
+      // Table full: replace the worst entry if this one is closer to the target.
+      int worstIdx = 0;
+      double worstAbs = fabs(validGapDiff[0]);
+      for (int vi = 1; vi < validCount; ++vi) {
+        double curAbs = fabs(validGapDiff[vi]);
+        if (curAbs > worstAbs) {
+          worstAbs = curAbs;
+          worstIdx = vi;
+        }
+      }
+      if (absGapDiff < worstAbs) {
+        validPW[worstIdx] = pw;
+        validGapDiff[worstIdx] = gapDiff;
+      }
     }
 
     if (havePrev) {
@@ -301,6 +379,44 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
         gapLow = prevGap;
         pwHigh = pw;
         gapHigh = gap;
+
+        // With two valid samples straddling the target, estimate the crossing
+        // point via linear interpolation between prevGap and gap.
+        double prevGapDiff = prevGap - gapTarget;
+        double curGapDiff  = gap - gapTarget;
+        double denom = fabs(prevGapDiff) + fabs(curGapDiff);
+        if (denom > 0.0) {
+          double t = fabs(prevGapDiff) / denom;  // weight towards the closer side
+          uint16_t pwEst = (uint16_t)((double)prevPW + ((double)(pw - prevPW) * t));
+          if (pwEst >= pwMin && pwEst <= pwMax) {
+            pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                               pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                               pwEst);
+            delay(30);
+            GapMeasurement gmEst = measure_gap(2);
+            if (!gmEst.timedOut) {
+              double gapEst = (double)gmEst.value;
+              double gapDiffEst = gapEst - gapTarget;
+              double absGapDiffEst = fabs(gapDiffEst);
+
+              if (absGapDiffEst <= (double)targetGap) {
+                inToleranceCount++;
+              }
+
+              if (absGapDiffEst < bestGap) {
+                bestGap = absGapDiffEst;
+                bestCandidate = pwEst;
+              }
+              // Insert estimated point into valid table if it's good enough.
+              if (validCount < kMaxSamples) {
+                validPW[validCount] = pwEst;
+                validGapDiff[validCount] = gapDiffEst;
+                validCount++;
+              }
+            }
+          }
+        }
+
         break;
       }
     }
@@ -312,9 +428,62 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
     prevPW = pw;
   }
 
-  // If we didn't find a bracket, fall back to the best coarse candidate.
+  // If we didn't find a bracket, we still want a fine search around the best
+  // coarse candidate so that we gather multiple near-target samples before
+  // deciding on a final PW.
   if (!haveBracket) {
-    Serial.println("PW center: no sign-change bracket found, using best coarse candidate.");
+    if (autotuneDebug >= 1) {
+      Serial.println("PW center: no sign-change bracket found, running local fine scan.");
+    }
+    uint16_t startPW = (bestCandidate >= pwMin && bestCandidate <= pwMax)
+                         ? bestCandidate
+                         : (uint16_t)((pwMin + pwMax) / 2);
+    uint16_t span = (coarseStep > 0) ? coarseStep * 2 : 4;
+    uint16_t fineMin = (startPW > span) ? (startPW - span) : pwMin;
+    uint16_t fineMax = (startPW + span < pwMax) ? (startPW + span) : pwMax;
+    if (fineMax < fineMin) {
+      uint16_t tmp = fineMin;
+      fineMin = fineMax;
+      fineMax = tmp;
+    }
+    uint16_t fineStep = (fineMax > fineMin) ? ((fineMax - fineMin) / 16) : 1;
+    if (fineStep == 0) fineStep = 1;
+
+    for (uint16_t pw = fineMin; pw <= fineMax; pw = (uint16_t)(pw + fineStep)) {
+      if (millis() - DCOCalibrationStart > 60000) {
+        Serial.println("PW center local fine scan timeout (60s)");
+        break;
+      }
+
+      pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                         pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                         pw);
+      delay(30);
+
+      GapMeasurement gm = measure_gap(2);
+      if (gm.timedOut) {
+        continue;
+      }
+
+      double gap = (double)gm.value;
+      double gapDiff = gap - gapTarget;
+      double absGapDiff = fabs(gapDiff);
+
+      if (absGapDiff <= (double)targetGap) {
+        inToleranceCount++;
+      }
+
+      if (absGapDiff < bestGap) {
+        bestGap = absGapDiff;
+        bestCandidate = pw;
+      }
+
+      if (validCount < kMaxSamples) {
+        validPW[validCount] = pw;
+        validGapDiff[validCount] = gapDiff;
+        validCount++;
+      }
+    }
   } else {
     // ---- Phase 2: Bisection search within the bracket ----
     for (int iter = 0; iter < 14; ++iter) {
@@ -343,6 +512,10 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
       double gapMid = (double)gm.value;
       double gapDiffMid = gapMid - gapTarget;
       double absGapDiffMid = abs(gapDiffMid);
+      if (absGapDiffMid <= (double)targetGap) {
+        inToleranceCount++;
+      }
+
       if (absGapDiffMid < bestGap) {
         bestGap = absGapDiffMid;
         bestCandidate = pwMid;
@@ -351,16 +524,15 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
       if (autotuneDebug >= 2 && periodUs > 0.0) {
         double dutyErrorFrac = -gapMid / (2.0 * periodUs);
         double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
-        Serial.println((String)"PW bisect: PW=" + pwMid +
+        Serial.println((String)"[PW_CENTER_BISECT] PW=" + pwMid +
                        (String)" gap=" + gapMid +
                        (String)"us duty=" + dutyPercent +
-                       (String)"% tolDuty≈" + toleranceDutyPercent + "%");
+                       (String)"% tolDuty~" + toleranceDutyPercent + "%");
       }
 
-      // Early exit if we're within the original target gap.
-      if (absGapDiffMid <= (double)targetGap) {
-        break;
-      }
+      // Do not early-exit on first in-tolerance sample; we want at least a
+      // couple of near-target measurements before deciding, or until the
+      // bracket can no longer be refined.
 
       // Maintain the sign-change bracket.
       if ((gapDiffMid > 0.0 && (gapLow - gapTarget) > 0.0) ||
@@ -379,25 +551,71 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
     }
   }
 
-  if (autotuneDebug >= 1) {
-    Serial.println((String)"PW search best gap: " + bestGap +
-                   (String)" at PW: " + bestCandidate);
+  // Choose the best PW from the valid samples table. Ensure we have at least
+  // a couple of samples within the target tolerance; otherwise the result is
+  // likely unreliable.
+  if (validCount > 0) {
+    int bestIdx = 0;
+    double bestAbs = fabs(validGapDiff[0]);
+    for (int vi = 1; vi < validCount; ++vi) {
+      double curAbs = fabs(validGapDiff[vi]);
+      if (curAbs < bestAbs) {
+        bestAbs = curAbs;
+        bestIdx = vi;
+      }
+    }
+    uint16_t chosenPW = validPW[bestIdx];
+    // Reconstruct the gap for the chosen sample so we can report its duty.
+    double chosenGap = gapTarget + validGapDiff[bestIdx];
+    double chosenDutyPercent = 0.0;
+    if (periodUs > 0.0) {
+      double dutyErrorFrac = -chosenGap / (2.0 * periodUs);
+      chosenDutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+    }
+    // If we don't have at least two samples within the target tolerance, or
+    // the best sample is still far from the target (e.g. > 10x the allowed
+    // gap), treat this as "no acceptable solution" and keep the existing PW.
+    if (inToleranceCount < 2 || bestAbs > (double)targetGap * 10.0) {
+      if (autotuneDebug >= 1) {
+        Serial.println((String)"PW search: insufficient in-tolerance samples (count=" +
+                       inToleranceCount +
+                       (String)") or best gap too large (" + bestAbs +
+                       (String)" > " + (double)targetGap * 10.0 +
+                       (String)"); keeping current PWCalibrationVal.");
+      }
+      return PWCalibrationVal;
+      } else {
+      if (autotuneDebug >= 1) {
+        Serial.println((String)"[PW_CENTER_RESULT] bestGap=" + bestAbs +
+                       (String)"us at PW=" + chosenPW +
+                       (String)" duty~" + chosenDutyPercent +
+                       (String)"% (valid samples=" + validCount + ")");
+      }
+      return chosenPW;
+    }
+      } else {
+    // No valid samples at all in the searched range: keep the existing PWCalibrationVal
+    // and log the situation so the user can investigate.
+    if (autotuneDebug >= 1) {
+      Serial.println("PW search: no valid samples found; keeping current PWCalibrationVal.");
+    }
+    return PWCalibrationVal;
   }
-
-  return bestCandidate;
 }
 
 // Locate PW center for the current DCO's voice by minimizing duty-cycle error
 // at a reference note. Mode 0 = low note, mode 1 = higher note refinement.
 void find_PW_center(uint8_t mode) {
 
+  DCO_calibration_current_note = manual_DCO_calibration_start_note;
+  VOICE_NOTES[0] = DCO_calibration_current_note;
+
   uint16_t targetGap;
   uint8_t voiceTaskMode;
+  
 
   if (mode == 0) {
-    DCO_calibration_current_note = manual_DCO_calibration_start_note;
-    VOICE_NOTES[0] = DCO_calibration_current_note;
-    targetGap = 20;
+    targetGap = compute_gap_tolerance_for_freq(sNotePitches[DCO_calibration_current_note - 12], 0.005);
     voiceTaskMode = 2;
   } else {
     DCO_calibration_current_note = 76;
@@ -442,11 +660,15 @@ void find_PW_center(uint8_t mode) {
 ////////////////////////////////
 
 // Find a lower PW limit for the current DCO's voice at which duty/frequency
-// behaviour remains acceptable. Uses the shared PW search with a low duty
-// fraction target (e.g. 10% duty).
+// behaviour remains acceptable. Starts from PW_CENTER and walks downward
+// toward 0, stopping when the duty-cycle crosses kPWLowDutyFraction or when
+// the PW range or time limit is reached.
 void find_PW_low_limit() {
-  DCO_calibration_current_note = DCO_calibration_start_note;
+  uint8_t voiceTaskMode = 2;
+
+  DCO_calibration_current_note = manual_DCO_calibration_start_note;
   VOICE_NOTES[0] = DCO_calibration_current_note;
+  ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
 
   currentNoteCalibrationStart = micros();
   DCOCalibrationStart = millis();
@@ -454,38 +676,213 @@ void find_PW_low_limit() {
   PIDOutputLowerLimit = 0;
   PIDOutputHigherLimit = DIV_COUNTER_PW;
 
-  // Use a gap tolerance proportional to the period (1% of period as before).
-  uint16_t targetGap = (uint16_t)(1000000.00f / sNotePitches[DCO_calibration_current_note - 12] * 0.01f);
-
-  // Initialize PW somewhere in the lower half of the range as a starting point.
-  PW[currentDCO / 2] = PW_CENTER[currentDCO / 2] / 2;
-  PWCalibrationVal = PW[currentDCO / 2];
-  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
-                     pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
-                     PW[currentDCO / 2]);
+  double freqHz   = (double)sNotePitches[DCO_calibration_current_note - 12];
+  double periodUs = (freqHz > 0.0) ? (1000000.0 / freqHz) : 0.0;
 
   // Configure the DCO for PW calibration mode.
-  voice_task_autotune(3, 0);
-
+  voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
   delay(100);
 
-  uint16_t lowPW = find_PW_for_target_duty(
-    kPWLowDutyFraction,
-    targetGap,
-    0,
-    PW_CENTER[currentDCO / 2]
-  );
+  uint8_t voiceIdx = currentDCO / 2;
+  uint16_t centerPW = PW_CENTER[voiceIdx];
+
+  // Step size for scanning downward from center.
+  uint16_t step = DIV_COUNTER_PW / 64;
+  if (step == 0) step = 1;
+
+  bool   havePrevValid = false;
+  double prevDuty = 0.0;
+  uint16_t prevPW = centerPW;
+
+  uint16_t lowPW = centerPW;  // Fallback if we don't find a better limit.
+
+  bool found = false;
+  int totalValidCount = 0;   // Count of all valid (non-timeout) samples across scans.
+
+  for (uint16_t pw = centerPW; ; ) {
+    if (millis() - DCOCalibrationStart > 60000) {
+      Serial.println("PW low limit search timeout (60s)");
+      break;
+    }
+
+    pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                       pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                       pw);
+    // Keep PW[] in sync so [GAP_TIMEOUT] logs show the actual PW we are testing.
+    PW[voiceIdx] = pw;
+    // Keep PW[] in sync so [GAP_TIMEOUT] logs show the actual PW we are testing.
+    PW[voiceIdx] = pw;
+    delay(30);
+
+    GapMeasurement gm = measure_gap(2);
+    if (!gm.timedOut && periodUs > 0.0) {
+      totalValidCount++;
+      double gap = (double)gm.value;
+      double dutyErrorFrac = -gap / (2.0 * periodUs);
+      double duty = 0.5 + dutyErrorFrac;
+
+      if (autotuneDebug >= 2) {
+        Serial.println((String)"[PW_LOW_SCAN] PW=" + pw +
+                       (String)" gap=" + gap +
+                       (String)"us duty=" + (duty * 100.0) + "%");
+      }
+
+      if (duty <= kPWLowDutyFraction) {
+        // We have reached or gone below the low duty target.
+        // If we had a previous valid sample above target, pick mid-point
+        // between prevPW and current PW; otherwise use current PW.
+        if (havePrevValid && prevDuty > kPWLowDutyFraction) {
+          lowPW = (uint16_t)((prevPW + pw) / 2);
+        } else {
+          lowPW = pw;
+        }
+        found = true;
+        break;
+      }
+
+      // Still above low duty target.
+      havePrevValid = true;
+      prevDuty = duty;
+      prevPW = pw;
+    } else if (gm.timedOut && havePrevValid) {
+      // We stepped from a valid PW into a region with no measurable signal.
+      // Treat the last valid PW as the low limit and stop scanning further away.
+      lowPW = prevPW;
+      found = true;
+      break;
+    }
+
+    if (pw <= step) {
+      // Reached or about to reach 0; stop.
+      break;
+    }
+    pw = (uint16_t)(pw - step);
+  }
+
+  // If coarse scan from center downward failed to find a threshold and we only
+  // ever saw a single valid sample (typically at the center), try again with a
+  // finer step size before giving up.
+  if (!found && totalValidCount <= 1 && step > 1) {
+    uint16_t fineStep = step / 4;
+    if (fineStep == 0) fineStep = 1;
+    if (fineStep != step) {
+      if (autotuneDebug >= 1) {
+        Serial.println((String)"[PW_LOW_RESCAN_FINE] centerPW=" + centerPW +
+                       (String)" coarseStep=" + step +
+                       (String)" fineStep=" + fineStep);
+      }
+      // Reset per-scan state for finer scan. We keep totalValidCount so that
+      // any valid center sample from the coarse pass is still counted.
+      havePrevValid = false;
+      prevDuty = 0.0;
+      prevPW = centerPW;
+
+      for (uint16_t pw = centerPW; ; ) {
+        if (millis() - DCOCalibrationStart > 60000) {
+          Serial.println("PW low limit search timeout (60s, fine scan)");
+          break;
+        }
+
+        pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                           pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                           pw);
+        PW[voiceIdx] = pw;
+        delay(30);
+
+        GapMeasurement gmFine = measure_gap(2);
+        if (!gmFine.timedOut && periodUs > 0.0) {
+          totalValidCount++;
+          double gap = (double)gmFine.value;
+          double dutyErrorFrac = -gap / (2.0 * periodUs);
+          double duty = 0.5 + dutyErrorFrac;
+
+          if (autotuneDebug >= 2) {
+            Serial.println((String)"[PW_LOW_SCAN_FINE] PW=" + pw +
+                           (String)" gap=" + gap +
+                           (String)"us duty=" + (duty * 100.0) + "%");
+          }
+
+          if (duty <= kPWLowDutyFraction) {
+            if (havePrevValid && prevDuty > kPWLowDutyFraction) {
+              lowPW = (uint16_t)((prevPW + pw) / 2);
+            } else {
+              lowPW = pw;
+            }
+            found = true;
+            break;
+          }
+
+          havePrevValid = true;
+          prevDuty = duty;
+          prevPW = pw;
+        } else if (gmFine.timedOut && havePrevValid) {
+          // As with the coarse pass, stepping from a valid PW into a timeout
+          // region means we've crossed the practical low edge. Use the last
+          // valid PW as the limit and stop scanning further.
+          lowPW = prevPW;
+          found = true;
+          break;
+        }
+
+        if (pw <= fineStep) {
+          break;
+        }
+        pw = (uint16_t)(pw - fineStep);
+      }
+    }
+  }
+
+  // After coarse + optional fine scan, decide whether to update the limit.
+  // If we only ever saw the center sample (no other valid data), don't update
+  // PW_LOW_LIMIT at all – keep the previous value from FS and log the fact.
+  if (!found && totalValidCount <= 1) {
+    if (autotuneDebug >= 1) {
+      Serial.println((String)"[PW_LOW_ABORT_NO_SIGNAL] keeping previous PW_LOW_LIMIT=" +
+                     PW_LOW_LIMIT[voiceIdx]);
+    }
+    return;
+  }
+
+  if (!found && havePrevValid) {
+    // No explicit threshold crossing found; use the lowest PW where we still
+    // had a valid duty measurement.
+    lowPW = prevPW;
+  }
+
+  if (autotuneDebug >= 1) {
+    // Recompute duty at the chosen lowPW for logging, if possible.
+    double finalDutyPercent = -1.0;
+    if (periodUs > 0.0) {
+      pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                         pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                         lowPW);
+      PW[voiceIdx] = lowPW;
+      delay(30);
+      GapMeasurement gmFinal = measure_gap(2);
+      if (!gmFinal.timedOut) {
+        double gap = (double)gmFinal.value;
+        double dutyErrorFrac = -gap / (2.0 * periodUs);
+        finalDutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+    }
+  }
+    Serial.println((String)"[PW_LOW_RESULT] PW_LOW_LIMIT=" + lowPW +
+                   (String)" duty~" + finalDutyPercent + "%");
+  }
   Serial.println("PW low limit found !!!");
-  update_FS_PW_Low_Limit(currentDCO / 2, lowPW);
-  PW_LOW_LIMIT[currentDCO / 2] = lowPW;
+  update_FS_PW_Low_Limit(voiceIdx, lowPW);
+  PW_LOW_LIMIT[voiceIdx] = lowPW;
 }
 
 // Find a higher PW limit for the current DCO's voice at which duty/frequency
-// behaviour remains acceptable. Uses the shared PW search with a high duty
-// fraction target (e.g. 90% duty).
+// behaviour remains acceptable. Starts from PW_CENTER and walks upward
+// toward DIV_COUNTER_PW, stopping when the duty-cycle crosses
+// kPWHighDutyFraction or when the PW range or time limit is reached.
 void find_PW_high_limit() {
-  DCO_calibration_current_note = DCO_calibration_start_note;
+  uint8_t voiceTaskMode = 2;
+
+  DCO_calibration_current_note = manual_DCO_calibration_start_note;
   VOICE_NOTES[0] = DCO_calibration_current_note;
+  ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
 
   currentNoteCalibrationStart = micros();
   DCOCalibrationStart = millis();
@@ -493,30 +890,197 @@ void find_PW_high_limit() {
   PIDOutputLowerLimit = 0;
   PIDOutputHigherLimit = DIV_COUNTER_PW;
 
-  // Use a gap tolerance proportional to the period (1% of period as before).
-  uint16_t targetGap = (uint16_t)(1000000.00f / sNotePitches[DCO_calibration_current_note - 12] * 0.01f);
-
-  // Initialize PW somewhere in the upper half of the range as a starting point.
-  PW[currentDCO / 2] = (PW_CENTER[currentDCO / 2] + DIV_COUNTER_PW) / 2;
-  PWCalibrationVal = PW[currentDCO / 2];
-  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
-                     pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
-                     PW[currentDCO / 2]);
+  double freqHz   = (double)sNotePitches[DCO_calibration_current_note - 12];
+  double periodUs = (freqHz > 0.0) ? (1000000.0 / freqHz) : 0.0;
 
   // Configure the DCO for PW calibration mode.
-  voice_task_autotune(3, 0);
-
+  voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
   delay(100);
 
-  uint16_t highPW = find_PW_for_target_duty(
-    kPWHighDutyFraction,
-    targetGap,
-    PW_CENTER[currentDCO / 2],
-    DIV_COUNTER_PW
-  );
+  uint8_t voiceIdx = currentDCO / 2;
+  uint16_t centerPW = PW_CENTER[voiceIdx];
+
+  // Step size for scanning upward from center.
+  uint16_t step = DIV_COUNTER_PW / 64;
+  if (step == 0) step = 1;
+
+  bool   havePrevValid = false;
+  double prevDuty = 0.0;
+  uint16_t prevPW = centerPW;
+
+  uint16_t highPW = centerPW;  // Fallback if we don't find a better limit.
+
+  bool found = false;
+  int totalValidCount = 0;   // Count of all valid (non-timeout) samples across scans.
+
+  for (uint16_t pw = centerPW; ; ) {
+    if (millis() - DCOCalibrationStart > 60000) {
+      Serial.println("PW high limit search timeout (60s)");
+      break;
+    }
+
+    pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                       pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                       pw);
+    delay(30);
+
+    GapMeasurement gm = measure_gap(2);
+    if (!gm.timedOut && periodUs > 0.0) {
+      totalValidCount++;
+      double gap = (double)gm.value;
+      double dutyErrorFrac = -gap / (2.0 * periodUs);
+      double duty = 0.5 + dutyErrorFrac;
+
+      if (autotuneDebug >= 2) {
+        Serial.println((String)"[PW_HIGH_SCAN] PW=" + pw +
+                       (String)" gap=" + gap +
+                       (String)"us duty=" + (duty * 100.0) + "%");
+      }
+
+      if (duty >= kPWHighDutyFraction) {
+        // We have reached or exceeded the high duty target.
+        // If we had a previous valid sample below target, pick mid-point
+        // between prevPW and current PW; otherwise use current PW.
+        if (havePrevValid && prevDuty < kPWHighDutyFraction) {
+          highPW = (uint16_t)((prevPW + pw) / 2);
+    } else {
+          highPW = pw;
+    }
+        found = true;
+        break;
+      }
+
+      // Still below high duty target.
+      havePrevValid = true;
+      prevDuty = duty;
+      prevPW = pw;
+    } else if (gm.timedOut && havePrevValid) {
+      // We stepped from a valid PW into a region with no measurable signal.
+      // Treat the last valid PW as the high limit and stop scanning further away.
+      highPW = prevPW;
+      found = true;
+      break;
+    }
+
+    if (pw >= DIV_COUNTER_PW - step) {
+      // Reached or about to reach maximum; stop.
+      break;
+    }
+    pw = (uint16_t)(pw + step);
+  }
+
+  // If coarse scan from center upward failed to find a threshold and we only
+  // ever saw a single valid sample (typically at the center), try again with a
+  // finer step size before giving up.
+  if (!found && totalValidCount <= 1 && step > 1) {
+    uint16_t fineStep = step / 4;
+    if (fineStep == 0) fineStep = 1;
+    if (fineStep != step) {
+      if (autotuneDebug >= 1) {
+        Serial.println((String)"[PW_HIGH_RESCAN_FINE] centerPW=" + centerPW +
+                       (String)" coarseStep=" + step +
+                       (String)" fineStep=" + fineStep);
+      }
+      // Reset per-scan state for finer scan. We keep totalValidCount so that
+      // any valid center sample from the coarse pass is still counted.
+      havePrevValid = false;
+      prevDuty = 0.0;
+      prevPW = centerPW;
+
+      for (uint16_t pw = centerPW; ; ) {
+        if (millis() - DCOCalibrationStart > 60000) {
+          Serial.println("PW high limit search timeout (60s, fine scan)");
+          break;
+        }
+
+        pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                           pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                           pw);
+        PW[voiceIdx] = pw;
+        delay(30);
+
+        GapMeasurement gmFine = measure_gap(2);
+        if (!gmFine.timedOut && periodUs > 0.0) {
+          totalValidCount++;
+          double gap = (double)gmFine.value;
+          double dutyErrorFrac = -gap / (2.0 * periodUs);
+          double duty = 0.5 + dutyErrorFrac;
+
+          if (autotuneDebug >= 2) {
+            Serial.println((String)"[PW_HIGH_SCAN_FINE] PW=" + pw +
+                           (String)" gap=" + gap +
+                           (String)"us duty=" + (duty * 100.0) + "%");
+          }
+
+          if (duty >= kPWHighDutyFraction) {
+            if (havePrevValid && prevDuty < kPWHighDutyFraction) {
+              highPW = (uint16_t)((prevPW + pw) / 2);
+            } else {
+              highPW = pw;
+            }
+            found = true;
+            break;
+          }
+
+          havePrevValid = true;
+          prevDuty = duty;
+          prevPW = pw;
+        } else if (gmFine.timedOut && havePrevValid) {
+          // As with the coarse pass, stepping from a valid PW into a timeout
+          // region means we've crossed the practical high edge. Use the last
+          // valid PW as the limit and stop scanning further.
+          highPW = prevPW;
+          found = true;
+          break;
+        }
+
+        if (pw >= DIV_COUNTER_PW - fineStep) {
+          break;
+        }
+        pw = (uint16_t)(pw + fineStep);
+      }
+    }
+  }
+
+  // After coarse + optional fine scan, decide whether to update the limit.
+  // If we only ever saw the center sample (no other valid data), don't update
+  // PW_HIGH_LIMIT at all – keep the previous value from FS and log the fact.
+  if (!found && totalValidCount <= 1) {
+    if (autotuneDebug >= 1) {
+      Serial.println((String)"[PW_HIGH_ABORT_NO_SIGNAL] keeping previous PW_HIGH_LIMIT=" +
+                     PW_HIGH_LIMIT[voiceIdx]);
+    }
+    return;
+  }
+
+  if (!found && havePrevValid) {
+    // No explicit threshold crossing found; use the highest PW where we still
+    // had a valid duty measurement.
+    highPW = prevPW;
+  }
+
+  if (autotuneDebug >= 1) {
+    // Recompute duty at the chosen highPW for logging, if possible.
+    double finalDutyPercent = -1.0;
+    if (periodUs > 0.0) {
+      pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                         pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                         highPW);
+      PW[voiceIdx] = highPW;
+      delay(30);
+      GapMeasurement gmFinal = measure_gap(2);
+      if (!gmFinal.timedOut) {
+        double gap = (double)gmFinal.value;
+        double dutyErrorFrac = -gap / (2.0 * periodUs);
+        finalDutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+    }
+  }
+    Serial.println((String)"[PW_HIGH_RESULT] PW_HIGH_LIMIT=" + highPW +
+                   (String)" duty~" + finalDutyPercent + "%");
+  }
   Serial.println("PW high limit found !!!");
-  update_FS_PW_High_Limit(currentDCO / 2, highPW);
-  PW_HIGH_LIMIT[currentDCO / 2] = highPW;
+  update_FS_PW_High_Limit(voiceIdx, highPW);
+  PW_HIGH_LIMIT[voiceIdx] = highPW;
 }
 
 // Measure duty-cycle error on DCO_calibration_pin by timing rising/falling
@@ -543,8 +1107,10 @@ float find_gap(byte specialMode) {
       edgeDetectionLastVal = 0;
 
       if (autotuneDebug >= 3) {
-        Serial.println("Timeout loop");
-        Serial.println((String) "ampCompCalibrationVal: " + ampCompCalibrationVal);
+        Serial.println((String)"[GAP_TIMEOUT] note=" + DCO_calibration_current_note +
+                       (String)" DCO=" + currentDCO +
+                       (String)" PW=" + PW[currentDCO / 2] +
+                       (String)" ampComp=" + ampCompCalibrationVal);
       }
 
       microsNow = micros();

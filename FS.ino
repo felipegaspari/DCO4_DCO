@@ -78,7 +78,7 @@ void init_FS() {
     // Serial.println((String) "PW_CENTER " + i + (String) ": " + uint16Data);
   }
   // PW_HIGH_LIMIT
-  if (!LittleFS.exists("PWHighLimit")) {
+    if (!LittleFS.exists("PWHighLimit")) {
     filePWHighLimitFS = LittleFS.open("PWHighLimit", "w+");
   } else {
     filePWHighLimitFS = LittleFS.open("PWHighLimit", "r");
@@ -96,7 +96,7 @@ void init_FS() {
 
     // // Debug:
     // // Serial.println((String) "PW_HIGH_LIMIT " + i + (String) ": " + uint16Data);
-  }
+  } 
   // PW_LOW_LIMIT
   if (!LittleFS.exists("PWLowLimit")) {
     filePWLowLimitFS = LittleFS.open("PWLowLimit", "w+");
@@ -163,10 +163,10 @@ void update_FS_PW_High_Limit(byte voiceN, uint16_t value) {
 
   uint16_t startByteN = voiceN * FSPWDataSize;
 
-  filePWCenterFS = LittleFS.open("PWHighLimit", "r+");
-  filePWCenterFS.seek(startByteN);
-  filePWCenterFS.write(b, FSPWDataSize);
-  filePWCenterFS.close();
+  filePWHighLimitFS = LittleFS.open("PWHighLimit", "r+");
+  filePWHighLimitFS.seek(startByteN);
+  filePWHighLimitFS.write(b, FSPWDataSize);
+  filePWHighLimitFS.close();
 }
 
 void update_FS_PW_Low_Limit(byte voiceN, uint16_t value) {
@@ -175,8 +175,8 @@ void update_FS_PW_Low_Limit(byte voiceN, uint16_t value) {
 
   uint16_t startByteN = voiceN * FSPWDataSize;
 
-  filePWCenterFS = LittleFS.open("PWLowLimit", "r+");
-  filePWCenterFS.seek(startByteN);
-  filePWCenterFS.write(b, FSPWDataSize);
-  filePWCenterFS.close();
+  filePWLowLimitFS = LittleFS.open("PWLowLimit", "r+");
+  filePWLowLimitFS.seek(startByteN);
+  filePWLowLimitFS.write(b, FSPWDataSize);
+  filePWLowLimitFS.close();
 }
