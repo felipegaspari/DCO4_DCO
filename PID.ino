@@ -3,6 +3,17 @@
 #include "autotune_measurement.h"
 #include "autotune_context.h"
 
+// Compute allowed |gap| (in microseconds) for a given frequency (Hz) and
+// duty-cycle error fraction (e.g. 0.005 = 0.5% duty error).
+static double compute_gap_tolerance_for_freq(double freqHz, double dutyErrorFraction) {
+  if (freqHz <= 0.0) {
+    return 1e6;  // Very loose tolerance if frequency is invalid.
+  }
+  double periodUs = 1e6 / freqHz;                         // Wave period in microseconds.
+  double toleranceUs = 2.0 * dutyErrorFraction * periodUs;  // From |gap| <= 2 * ε * T.
+  return toleranceUs;
+}
+
 // Return true if the two values have opposite signs (simple sign change test).
 // Used by calibrate_DCO() to detect when the duty-cycle error has crossed
 // through zero between successive measurements (indicating we've passed the
@@ -457,7 +468,9 @@ float find_lowest_freq() {
 //  - Picks an initial PWM guess (via interpolation),
 //  - Searches locally for the PWM that makes the duty error closest to zero,
 //  - Stores the best PWM together with the note frequency in ctx.calibrationData.
-void calibrate_DCO(DCOCalibrationContext& ctx) {
+// dutyErrorFraction controls how much duty-cycle error (e.g. 0.005 = 0.5%)
+// is tolerated before the search stops for each note.
+void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
 
   double tolerance;      // Allowed absolute duty error (in microseconds) for a given note.
   uint16_t minAmpComp;   // Lower bound for the PWM search around the initial guess.
@@ -487,11 +500,8 @@ void calibrate_DCO(DCOCalibrationContext& ctx) {
     uint16_t minAmpComp = currentAmpCompCalibrationVal * 0.8;  // Lower Limit for this note.
     uint16_t maxAmpComp = currentAmpCompCalibrationVal * 1.3;  // Upper Limit for this note.
 
-    // Old formula for tolerance (kept for reference):
-    // tolerance = (double)(37701.182837 * pow(0.855327, (double)ctx.currentNote));
-    // Current formula: tolerance scales with the square of the period (1/f^2)
-    // so that higher notes demand tighter absolute timing precision.
-    tolerance = (double)1000000.00 / (double)sNotePitches[VOICE_NOTES[0] - 12] /  (double)sNotePitches[VOICE_NOTES[0] - 12] / 4.00d;
+    double freqHz = sNotePitches[VOICE_NOTES[0] - 12];
+    tolerance = compute_gap_tolerance_for_freq(freqHz, dutyErrorFraction);
 
     Serial.println((String) "Current DCO: " + ctx.dcoIndex);
     Serial.println((String) "Calibration note: " + VOICE_NOTES[0]);

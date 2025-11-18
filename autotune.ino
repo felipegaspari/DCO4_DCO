@@ -136,7 +136,9 @@ void DCO_calibration() {
       manualCalibrationOffset,
       initManualAmpCompCalibrationVal
     );
-    calibrate_DCO(ctx);
+    // Desired duty-cycle error tolerance as a fraction (e.g. 0.005 = 0.5%).
+    double dutyErrorFraction = 0.005;
+    calibrate_DCO(ctx, dutyErrorFraction);
 
     for (int i = 0; i < chanLevelVoiceDataSize; i++) {
       Serial.println(calibrationData[i]);

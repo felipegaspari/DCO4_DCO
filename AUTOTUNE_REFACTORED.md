@@ -26,6 +26,8 @@ It is meant to complement `AUTOTUNE.md` (which explains the original behaviour a
     - Detect sign changes in the duty error (`did_sign_change`).
     - Evaluate neighbour measurements (`update_best_from_neighbours`).
     - Step the PWM according to error (`step_amp_from_error`).
+    - Compute the initial PWM guess for each calibration point (`compute_initial_amp_for_note`).
+    - Store a per-note calibration result and log it (`store_note_result`).
 - Legacy code is clearly marked and wrapped in `#if 0` blocks where unused.
 
 The **calibration algorithm** itself is intentionally unchanged; the refactor focuses on readability, separation of concerns, and making state dependencies explicit.
@@ -217,6 +219,21 @@ Contains the **search‑based DCO calibration algorithm** (`calibrate_DCO`) and 
       - Else → step by ±2.
     - Keeps previous behaviour but is now named and isolated.
 
+  - `static uint16_t compute_initial_amp_for_note(const DCOCalibrationContext& ctx, int j);`
+    - Encapsulates the initial PWM guess for each table index:
+      - `j == 4`: manual preset scaled by 1.35.
+      - `j == 6`: logarithmic interpolation based on the first two calibration pairs.
+      - Else: quadratic interpolation based on the previous three calibration pairs.
+
+  - `static double compute_gap_tolerance_for_freq(double freqHz, double dutyErrorFraction);`
+    - Computes the allowed absolute gap (in microseconds) for a given frequency and desired duty-cycle error fraction \(\varepsilon\).
+    - Uses the relation \(|p - 0.5| = |\text{gap}| / (2T)\) with \(T = 10^6/f\), giving \(|\text{gap}|_\text{max} = 2\varepsilon T\).
+    - `calibrate_DCO` currently calls this with a compile-time fraction (e.g. 0.5% duty error) but it’s parameterized so different tolerances could be used later.
+
+  - `static void store_note_result(DCOCalibrationContext& ctx, int j, uint16_t bestAmpComp, float closestToZero);`
+    - Writes the final `[freq, pwm]` pair for the current note into `ctx.calibrationData`.
+    - Prints a short human‑readable summary over `Serial`.
+
 - **`calibrate_DCO(DCOCalibrationContext& ctx)`**:
 
   Core responsibilities are unchanged; refactor only clarifies structure:
@@ -225,9 +242,9 @@ Contains the **search‑based DCO calibration algorithm** (`calibrate_DCO`) and 
      - For each `j` (table index), computes:
        - `ctx.currentNote` = start note + `calibration_note_interval * (j - 4)/2`.
        - `VOICE_NOTES[0]` updated accordingly.
-     - Initial PWM guess:
+     - Initial PWM guess is now computed through `compute_initial_amp_for_note(ctx, j)`:
        - `j == 4`:
-         - `(ctx.initManualAmpByOsc[ctx.dcoIndex] + ctx.manualOffsetByOsc[ctx.dcoIndex]) * 1.35`.
+         - Manual preset plus manual offset, scaled by 1.35.
        - `j == 6`:
          - Logarithmic interpolation based on `ctx.calibrationData[2..5]`.
        - Else:
@@ -256,9 +273,15 @@ Contains the **search‑based DCO calibration algorithm** (`calibrate_DCO`) and 
 
   4. **Store per‑note result**:
      - On exit from the loop:
-       - `ctx.calibrationData[j]   = sNotePitches[ctx.currentNote - 12] * 100;`
-       - `ctx.calibrationData[j+1] = bestAmpComp;`
-     - Logs the note index and best PWM.
+       - `store_note_result(ctx, j, bestAmpComp, closestToZero);`
+       - This writes the `[freq, pwm]` pair and logs the note index, best PWM, and final error.
+
+  5. **Behavioural fix (bug clean‑up)**:
+     - The original code used a confusing expression when updating `closestToZero` / `bestAmpComp`:
+       - `if (abs(avgValue) < abs(closestToZero && avgValue != 1.16999f))`
+     - This has been corrected to:
+       - `if (avgValue != kGapTimeoutSentinel && abs(avgValue) < abs(closestToZero))`
+     - This matches the intended semantics: ignore timeout readings and only update the best candidate when the new measurement is valid and closer to zero in absolute value.
 
 - **Legacy functions** (under `#if 0`) remain documented but disabled:
   - `PID_dco_calibration`, `PID_find_highest_freq`, `find_lowest_freq`.
