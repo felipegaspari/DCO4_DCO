@@ -253,6 +253,15 @@ static void apply_param_calibration_flag(int16_t v) {
 }
 
 static void apply_param_manual_calibration_flag(int16_t v) {
+  // When manual calibration is active, both flags follow this param.
+  // When it is turned off (v == 0), persist the final per‑oscillator
+  // manualCalibrationOffset[] values to the filesystem so they survive reboot.
+  if (v == 0) {
+    // Manual stage ended – commit all offsets in one batch.
+    for (uint8_t osc = 0; osc < NUM_OSCILLATORS; ++osc) {
+      update_FS_ManualCalibrationOffset(osc, manualCalibrationOffset[osc]);
+    }
+  }
   manualCalibrationFlag = v;
   calibrationFlag = v;
 }

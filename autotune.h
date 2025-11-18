@@ -67,7 +67,7 @@ float DCO_calibration_difference;
 uint16_t samplesNumber;
 
 // Note from which DCO calibration starts (MIDI note index).
-static constexpr uint8_t DCO_calibration_start_note = 23;
+static constexpr uint8_t DCO_calibration_start_note = 29; // 29 == C0
 // Interval in semitones between successive calibration notes.
 static constexpr uint8_t calibration_note_interval = 5;
 // Starting note used for manual/PW-centered calibration passes.

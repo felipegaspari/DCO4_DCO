@@ -118,6 +118,25 @@ void init_FS() {
     // Serial.println((String) "PW_LOW_LIMIT " + i + (String) ": " + uint16Data);
   }
 
+  // Manual calibration offsets (one signed byte per oscillator).
+  if (!LittleFS.exists("ManualOffset")) {
+    fileManualOffsetFS = LittleFS.open("ManualOffset", "w+");
+    // Initialise FS with zeros so future reads are defined.
+    for (int i = 0; i < FSManualOffsetBankSize; ++i) {
+      ManualOffsetBankBuffer[i] = 0;
+    }
+    fileManualOffsetFS.write(ManualOffsetBankBuffer, FSManualOffsetBankSize);
+  } else {
+    fileManualOffsetFS = LittleFS.open("ManualOffset", "r");
+    fileManualOffsetFS.read(ManualOffsetBankBuffer, FSManualOffsetBankSize);
+  }
+  fileManualOffsetFS.close();
+
+  // Copy stored offsets into the runtime array.
+  for (int osc = 0; osc < NUM_OSCILLATORS; ++osc) {
+    manualCalibrationOffset[osc] = (int8_t)ManualOffsetBankBuffer[osc];
+  }
+
 #endif
 
   //singleFileDrive.begin("voiceTables", "voicetables.txt");
@@ -179,4 +198,19 @@ void update_FS_PW_Low_Limit(byte voiceN, uint16_t value) {
   filePWLowLimitFS.seek(startByteN);
   filePWLowLimitFS.write(b, FSPWDataSize);
   filePWLowLimitFS.close();
+}
+
+// Persist a single manualCalibrationOffset entry for the given oscillator index.
+void update_FS_ManualCalibrationOffset(byte oscIndex, int8_t value) {
+  if (oscIndex >= NUM_OSCILLATORS) {
+    return;
+  }
+
+  uint8_t b = (uint8_t)value;  // store raw signed byte
+  uint16_t startByteN = oscIndex * FSManualOffsetDataSize;
+
+  fileManualOffsetFS = LittleFS.open("ManualOffset", "r+");
+  fileManualOffsetFS.seek(startByteN);
+  fileManualOffsetFS.write(&b, FSManualOffsetDataSize);
+  fileManualOffsetFS.close();
 }
