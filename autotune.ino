@@ -1,5 +1,35 @@
 
 #include "include_all.h"
+#include "autotune_constants.h"
+#include "autotune_measurement.h"
+#include "autotune_context.h"
+
+// Helper: turn off all oscillators and set their range PWMs to 0.
+static void disable_all_oscillators_and_range_pwm() {
+  for (int i = 0; i < NUM_OSCILLATORS; i++) {
+    uint8_t pioNumber = VOICE_TO_PIO[i];
+    PIO pioN = pio[VOICE_TO_PIO[i]];
+    uint8_t sm1N = VOICE_TO_SM[i];
+
+    uint32_t clk_div1 = 200;
+
+    pio_sm_put(pioN, sm1N, clk_div1);
+    pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
+    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
+  }
+}
+
+// Helper: set PW for all even-indexed voices to the center value.
+static void reset_even_pw_to_center() {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
+    PW[i] = DIV_COUNTER_PW / 2;
+    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
+  }
+}
+
+// Initialize legacy PID-based DCO calibration state for oscillator 0.
+// Note: the main calibration now uses calibrate_DCO(); this is kept
+// for compatibility and reference.
 void init_DCO_calibration() {
 
   currentDCO = 0;
@@ -30,24 +60,9 @@ void init_DCO_calibration() {
   PIDOutputLowerLimit = 70;
   PIDOutputHigherLimit = 100;
 
-  // TURN OFF ALL OSCILLATORS:
-  for (int i = 0; i < NUM_OSCILLATORS; i++) {
-
-    uint8_t pioNumber = VOICE_TO_PIO[i];
-    PIO pioN = pio[VOICE_TO_PIO[i]];
-    uint8_t sm1N = VOICE_TO_SM[i];
-
-    uint32_t clk_div1 = 200;
-
-    pio_sm_put(pioN, sm1N, clk_div1);
-    pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
-  }
-
-  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
-    PW[i] = DIV_COUNTER_PW / 2;
-    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-  }
+  // TURN OFF ALL OSCILLATORS and reset PW for even voices.
+  disable_all_oscillators_and_range_pwm();
+  reset_even_pw_to_center();
 
   // DISABLE PW PWM
   // for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
@@ -75,26 +90,16 @@ void init_DCO_calibration() {
 /*************************************************************************************/
 /*************************************************************************************/
 /*************************************************************************************/
+// Main DCO amplitude-compensation calibration entry point.
+// For each DCO:
+//  - Optionally find PW center (for even-indexed oscillators),
+//  - Run calibrate_DCO() to build a [freq -> range PWM] table,
+//  - Persist that table via update_FS_voice().
 void DCO_calibration() {
 
-  // TURN OFF ALL OSCILLATORS:
-  for (int i = 0; i < NUM_OSCILLATORS; i++) {
-
-    uint8_t pioNumber = VOICE_TO_PIO[i];
-    PIO pioN = pio[VOICE_TO_PIO[i]];
-    uint8_t sm1N = VOICE_TO_SM[i];
-
-    uint32_t clk_div1 = 200;
-
-    pio_sm_put(pioN, sm1N, clk_div1);
-    pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
-  }
-
-  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
-    PW[i] = DIV_COUNTER_PW / 2;
-    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-  }
+  // TURN OFF ALL OSCILLATORS and reset PW for even voices.
+  disable_all_oscillators_and_range_pwm();
+  reset_even_pw_to_center();
 
   for (int i = 0; i < NUM_OSCILLATORS; i++) {
     currentDCO = i;
@@ -123,7 +128,15 @@ void DCO_calibration() {
 
     bool oscAmpCompCalibrationComplete = false;
 
-    calibrate_DCO();
+    // Build a small context for this DCO and run the calibration routine.
+    DCOCalibrationContext ctx(
+      currentDCO,
+      DCO_calibration_current_note,
+      calibrationData,
+      manualCalibrationOffset,
+      initManualAmpCompCalibrationVal
+    );
+    calibrate_DCO(ctx);
 
     for (int i = 0; i < chanLevelVoiceDataSize; i++) {
       Serial.println(calibrationData[i]);
@@ -152,6 +165,8 @@ void DCO_calibration() {
 /*************************************************************************************/
 /*************************************************************************************/
 
+// Reset per-DCO calibration state and header entries in calibrationData.
+// This is called before calibrating each DCO (and reused by VCO calibration).
 void restart_DCO_calibration() {
 
   VOICE_NOTES[0] = DCO_calibration_start_note;
@@ -173,19 +188,8 @@ void restart_DCO_calibration() {
   PIDMinGap = 300;
 
 
-  // TURN OFF ALL OSCILLATORS:
-  for (int i = 0; i < NUM_OSCILLATORS; i++) {
-
-    uint8_t pioNumber = VOICE_TO_PIO[i];
-    PIO pioN = pio[VOICE_TO_PIO[i]];
-    uint8_t sm1N = VOICE_TO_SM[i];
-
-    uint32_t clk_div1 = 200;
-
-    pio_sm_put(pioN, sm1N, clk_div1);
-    pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
-  }
+  // TURN OFF ALL OSCILLATORS for a clean restart.
+  disable_all_oscillators_and_range_pwm();
 
   delay(100);
 
@@ -205,6 +209,8 @@ void restart_DCO_calibration() {
 /*************************************************************************************/
 /*************************************************************************************/
 
+// Locate PW center for the current DCO's voice by minimizing duty-cycle error
+// at a reference note. Mode 0 = low note, mode 1 = higher note refinement.
 void find_PW_center(uint8_t mode) {
 
   uint16_t targetGap;
@@ -263,12 +269,12 @@ void find_PW_center(uint8_t mode) {
 
     double PIDgap;
     double difference;
-    double currentGap = find_gap(2);  // distance away from setpoint
 
-
-    if (currentGap != 1.16999f) {
-      PIDgap = abs(currentGap);
-      difference = currentGap;
+    // Measure duty-cycle gap and interpret timeout as "reuse last values".
+    GapMeasurement gm = measure_gap(2);  // distance away from setpoint
+    if (!gm.timedOut) {
+      PIDgap = abs(gm.value);
+      difference = gm.value;
     } else {
       difference = lastDCODifference;
       PIDgap = lastPIDgap;
@@ -348,6 +354,8 @@ void find_PW_center(uint8_t mode) {
 ////////////////////////////////
 ////////////////////////////////
 
+// Find a lower PW limit for the current DCO's voice at which duty/frequency
+// behaviour remains acceptable. Uses find_gap() as the error metric.
 void find_PW_low_limit() {
   DCO_calibration_current_note = DCO_calibration_start_note;
   VOICE_NOTES[0] = DCO_calibration_current_note;
@@ -460,6 +468,8 @@ void find_PW_low_limit() {
   PW_LOW_LIMIT[currentDCO / 2] = PWCalibrationVal;
 }
 
+// Measure duty-cycle error on DCO_calibration_pin by timing rising/falling
+// edges. Returns 0 when duty is ≈50%, or kGapTimeoutSentinel on timeout.
 float find_gap(byte specialMode) {
   if (specialMode == 2) {  // find lowest freq mode
     samplesNumber = 14;
@@ -468,17 +478,16 @@ float find_gap(byte specialMode) {
   }
 
   edgeDetectionLastTime = micros();
-  
 
   while (samplesCounter < samplesNumber) {
 
     bool val = digitalRead(DCO_calibration_pin);
     microsNow = micros();
-    if ((microsNow - edgeDetectionLastTime) > 100000) {
+    if ((microsNow - edgeDetectionLastTime) > kGapTimeoutUs) {
 
       pulseCounter = 0;
       samplesCounter = 0;
-      DCO_calibration_difference = 1.16999f;
+      DCO_calibration_difference = kGapTimeoutSentinel;
       val = 0;
       edgeDetectionLastVal = 0;
 
@@ -490,10 +499,10 @@ float find_gap(byte specialMode) {
       microsNow = micros();
       edgeDetectionLastTime = microsNow;
 
-      return 1.16999f;
+      return kGapTimeoutSentinel;
     }
     if (val != edgeDetectionLastVal) {
-      if ((microsNow - edgeDetectionLastTime) >= 30) {
+      if ((microsNow - edgeDetectionLastTime) >= kEdgeDebounceMinUs) {
 
         edgeDetectionLastVal = val;
 
@@ -532,7 +541,7 @@ float find_gap(byte specialMode) {
     edgeDetectionLastVal = 0;
 
   } else {
-    return 1.16999f;
+    return kGapTimeoutSentinel;
   }
   return (float)DCO_calibration_difference;
 }
@@ -541,6 +550,9 @@ float find_gap(byte specialMode) {
 /*************************************************************************************/
 /*************************************************************************************/
 
+// LEGACY: PID-based search for highest achievable DCO frequency.
+// Currently unused by the main calibration flow (calibrate_DCO()).
+#if 0  // LEGACY_DCO_CALIBRATION_FIND_HIGHEST_FREQ
 void DCO_calibration_find_highest_freq() {
 
   samplesNumber = 28;
@@ -598,11 +610,14 @@ void DCO_calibration_find_highest_freq() {
     edgeDetectionLastVal = 0;
   }
 }
+#endif  // LEGACY_DCO_CALIBRATION_FIND_HIGHEST_FREQ
 
 /*************************************************************************************/
 /*************************************************************************************/
 /*************************************************************************************/
 
+// Debug helper: repeatedly measure and print duty-cycle difference for
+// the current note. Not used in normal calibration flow.
 void DCO_calibration_debug() {
   // if (DCO_calibration_current_note > 31) {
   //   samplesNumber = 25 * 2;
@@ -624,11 +639,11 @@ void DCO_calibration_debug() {
     bool val = digitalRead(DCO_calibration_pin);
     microsNow = micros();
 
-    if ((microsNow - edgeDetectionLastTime) > 100000) {
+    if ((microsNow - edgeDetectionLastTime) > kGapTimeoutUs) {
 
       pulseCounter = 0;
       samplesCounter = 0;
-      DCO_calibration_difference = 1.16999f;
+      DCO_calibration_difference = kGapTimeoutSentinel;
       val = 0;
       edgeDetectionLastVal = 0;
 
@@ -643,7 +658,7 @@ void DCO_calibration_debug() {
     }
 
     if (val != edgeDetectionLastVal) {
-      if ((microsNow - edgeDetectionLastTime) >= 30) {
+      if ((microsNow - edgeDetectionLastTime) >= kEdgeDebounceMinUs) {
 
         edgeDetectionLastVal = val;
 
@@ -693,26 +708,14 @@ void DCO_calibration_debug() {
 /*************************************************************************************/
 /*************************************************************************************/
 
+// LEGACY: VCO-style calibration entry point mirroring DCO_calibration().
+// This is currently unused in the main firmware but kept for reference.
+#if 0  // LEGACY_VCO_CALIBRATION
 void VCO_calibration() {
 
-  // TURN OFF ALL OSCILLATORS:
-  for (int i = 0; i < NUM_OSCILLATORS; i++) {
-
-    uint8_t pioNumber = VOICE_TO_PIO[i];
-    PIO pioN = pio[VOICE_TO_PIO[i]];
-    uint8_t sm1N = VOICE_TO_SM[i];
-
-    uint32_t clk_div1 = 200;
-
-    pio_sm_put(pioN, sm1N, clk_div1);
-    pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
-  }
-
-  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
-    PW[i] = DIV_COUNTER_PW / 2;
-    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
-  }
+  // TURN OFF ALL OSCILLATORS and reset PW for even voices.
+  disable_all_oscillators_and_range_pwm();
+  reset_even_pw_to_center();
 
   for (int i = 0; i < NUM_OSCILLATORS; i++) {
     currentDCO = i;
@@ -765,11 +768,16 @@ void VCO_calibration() {
   
   // Rebuild amp-comp tables for the active engine.
   precompute_amp_comp_for_engine();}
+#endif  // LEGACY_VCO_CALIBRATION
 
 /*************************************************************************************/
 /*************************************************************************************/
 /*************************************************************************************/
 
+// Measure VCO/DCO frequency by timing edges and computing the period.
+// Sets DCO_calibration_difference to (targetFreq - measuredFreq).
+// Currently unused in the main calibration flow.
+#if 0  // LEGACY_VCO_MEASURE_FREQUENCY
 void VCO_measure_frequency() {
   samplesNumber = 12;
   edgeDetectionLastTime = micros();
@@ -778,10 +786,10 @@ void VCO_measure_frequency() {
     bool val = digitalRead(DCO_calibration_pin);
     microsNow = micros();
 
-    if ((microsNow - edgeDetectionLastTime) > 100000) {
+    if ((microsNow - edgeDetectionLastTime) > kGapTimeoutUs) {
       pulseCounter = 0;
       samplesCounter = 0;
-      DCO_calibration_difference = 1.16999f;
+      DCO_calibration_difference = kGapTimeoutSentinel;
       val = 0;
       edgeDetectionLastVal = 0;
 
@@ -796,7 +804,7 @@ void VCO_measure_frequency() {
     }
 
     if (val != edgeDetectionLastVal) {
-      if ((microsNow - edgeDetectionLastTime) >= 30) {
+      if ((microsNow - edgeDetectionLastTime) >= kEdgeDebounceMinUs) {
         edgeDetectionLastVal = val;
 
         if (pulseCounter == 1 && val == 0) {
@@ -833,6 +841,7 @@ void VCO_measure_frequency() {
 
   }
 }
+#endif  // LEGACY_VCO_MEASURE_FREQUENCY
 
 /*************************************************************************************/
 /*************************************************************************************/

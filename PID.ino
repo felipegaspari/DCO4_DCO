@@ -1,4 +1,25 @@
 #include "include_all.h"
+#include "autotune_constants.h"
+#include "autotune_measurement.h"
+#include "autotune_context.h"
+
+// Return true if the two values have opposite signs (simple sign change test).
+static bool did_sign_change(float previous, float current) {
+  return (previous > 0.0f && current < 0.0f) ||
+         (previous < 0.0f && current > 0.0f);
+}
+
+// Helper: set the current DCO amplitude, wait for the waveform to settle,
+// and return the measured duty-cycle gap (or timeout sentinel value).
+static float measure_gap_for_amp(uint16_t ampPwm) {
+  voice_task_autotune(0, ampPwm);
+  delay(10);
+  GapMeasurement gm = measure_gap(0);
+  return gm.value;
+}
+
+// Initialize the global PID controller used by some legacy calibration
+// routines. Newer code relies more on explicit search than on PID_v1.
 void init_PID() {
   //initialize the variables we're linked to
   PIDInput = -2000;
@@ -7,6 +28,10 @@ void init_PID() {
   myPID.SetMode(AUTOMATIC);
 }
 
+// LEGACY: Note-by-note DCO calibration loop driven by PID_v1.
+// Superseded by calibrate_DCO() and currently not used in the main flow.
+// Left here for reference and potential future experiments.
+#if 0  // LEGACY_PID_DCO_CALIBRATION
 bool PID_dco_calibration() {
 
   PIDInput = (double)constrain(DCO_calibration_difference, -1500, 1500);
@@ -147,6 +172,7 @@ bool PID_dco_calibration() {
   return false;
 }
 
+#if 0  // LEGACY_PID_FIND_HIGHEST_FREQ (unused helper)
 void PID_find_highest_freq() {
 
   ampCompCalibrationVal = DIV_COUNTER;
@@ -180,6 +206,8 @@ void PID_find_highest_freq() {
     }
   }
 }
+#endif  // LEGACY_PID_FIND_HIGHEST_FREQ
+#endif  // LEGACY_PID_DCO_CALIBRATION
 
 float find_highest_freq() {
 
@@ -217,6 +245,7 @@ float find_highest_freq() {
   return PIDOutput * 100;
 }
 
+#if 0  // LEGACY_FIND_LOWEST_FREQ (unused helper)
 float find_lowest_freq() {
 
   DCO_calibration_difference = 1000;
@@ -262,16 +291,16 @@ float find_lowest_freq() {
 
       voice_task_autotune(4, PIDOutput);
       delay(150);
-      gapArray[i] = (double)find_gap(2);
+      // Use structured gap measurement to detect timeouts more clearly.
+      GapMeasurement gm = measure_gap(2);
+      gapArray[i] = (double)gm.value;
 
       Serial.println((String) "validValuesArray: " + validValuesArray[i]);
       Serial.println((String) "gapArray: " + gapArray[i]);
       Serial.println((String) "PIDOutput: " + PIDOutput);
       Serial.println((String) "i: " + i);
 
-
-
-      if (gapArray[i] != 1.16999f) {
+      if (!gm.timedOut) {
         if (abs(gapArray[i]) < targetGap) {
           closestToZero = PIDOutput;
           lowestFreqFound = true;
@@ -310,8 +339,9 @@ float find_lowest_freq() {
   Serial.println((String) "Lowest freq found: " + PIDOutput);
   return closestToZero * 100;
 }
+#endif  // LEGACY_FIND_LOWEST_FREQ
 
-void calibrate_DCO() {
+void calibrate_DCO(DCOCalibrationContext& ctx) {
 
   double tolerance;      // minGap
   uint16_t minAmpComp;   // Lower Limit
@@ -322,24 +352,24 @@ void calibrate_DCO() {
   for (int j = 4; j < numPresetVoltages; j += 2) {  // Start from the 3rd preset voltage
     uint16_t currentAmpCompCalibrationVal;
 
-    DCO_calibration_current_note = DCO_calibration_start_note + (calibration_note_interval * (j - 4) / 2);
-    VOICE_NOTES[0] = DCO_calibration_current_note;
+    ctx.currentNote = DCO_calibration_start_note + (calibration_note_interval * (j - 4) / 2);
+    VOICE_NOTES[0] = ctx.currentNote;
     if (j == 4) {
-      currentAmpCompCalibrationVal = (initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO])* 1.35;
+      currentAmpCompCalibrationVal = (ctx.initManualAmpByOsc[ctx.dcoIndex] + ctx.manualOffsetByOsc[ctx.dcoIndex]) * 1.35;
     } else if (j == 6) {
-      currentAmpCompCalibrationVal = logarithmicInterpolation(calibrationData[2], calibrationData[3], calibrationData[4], calibrationData[5], sNotePitches[DCO_calibration_current_note - 12] * 100);
+      currentAmpCompCalibrationVal = logarithmicInterpolation(ctx.calibrationData[2], ctx.calibrationData[3], ctx.calibrationData[4], ctx.calibrationData[5], sNotePitches[ctx.currentNote - 12] * 100);
     } else {
-      currentAmpCompCalibrationVal = quadraticInterpolation(calibrationData[j - 6], calibrationData[j - 5], calibrationData[j - 4], calibrationData[j - 3], calibrationData[j - 2], calibrationData[j - 1], sNotePitches[DCO_calibration_current_note - 12] * 100);
+      currentAmpCompCalibrationVal = quadraticInterpolation(ctx.calibrationData[j - 6], ctx.calibrationData[j - 5], ctx.calibrationData[j - 4], ctx.calibrationData[j - 3], ctx.calibrationData[j - 2], ctx.calibrationData[j - 1], sNotePitches[ctx.currentNote - 12] * 100);
     }
 
     if (currentAmpCompCalibrationVal > DIV_COUNTER * 0.98) {
       float highestFreqFound = find_highest_freq();
-      calibrationData[j] = highestFreqFound;
-      calibrationData[j + 1] = DIV_COUNTER;
+      ctx.calibrationData[j] = highestFreqFound;
+      ctx.calibrationData[j + 1] = DIV_COUNTER;
 
       for (int i = j + 2; i < numPresetVoltages; i += 2) {
-        calibrationData[i] = 20000000;
-        calibrationData[i + 1] = DIV_COUNTER;
+        ctx.calibrationData[i] = 20000000;
+        ctx.calibrationData[i + 1] = DIV_COUNTER;
       }
       break;
     }
@@ -347,10 +377,10 @@ void calibrate_DCO() {
     uint16_t minAmpComp = currentAmpCompCalibrationVal * 0.8;  // Lower Limit
     uint16_t maxAmpComp = currentAmpCompCalibrationVal * 1.3;  //  Higher Limit
 
-    //tolerance = (double)(37701.182837 * pow(0.855327, (double)DCO_calibration_current_note));
+    //tolerance = (double)(37701.182837 * pow(0.855327, (double)ctx.currentNote));
     tolerance = (double)1000000.00 / (double)sNotePitches[VOICE_NOTES[0] - 12] /  (double)sNotePitches[VOICE_NOTES[0] - 12] / 4.00d;
 
-    Serial.println((String) "Current DCO: " + currentDCO);
+    Serial.println((String) "Current DCO: " + ctx.dcoIndex);
     Serial.println((String) "Calibration note: " + VOICE_NOTES[0]);
     Serial.println((String) "Calibration note freq: " + sNotePitches[VOICE_NOTES[0] - 12]);
     Serial.println((String) "Calibration note amplitude: " + currentAmpCompCalibrationVal);
@@ -373,11 +403,10 @@ void calibrate_DCO() {
     int flipCounter = 0;
 
     while (true) {
-      voice_task_autotune(0, currentAmpCompCalibrationVal);
-      delay(10);
-      float avgValue = find_gap(0);
+      float avgValue = measure_gap_for_amp(currentAmpCompCalibrationVal);
 
-      if (abs(avgValue) < abs(closestToZero && avgValue != 1.16999f)) {
+      // Keep existing behaviour but avoid hard-coded sentinel literal.
+      if (abs(avgValue) < abs(closestToZero && avgValue != kGapTimeoutSentinel)) {
         closestToZero = avgValue;
         bestAmpComp = currentAmpCompCalibrationVal;
       } else {
@@ -385,18 +414,16 @@ void calibrate_DCO() {
       }
 
       // Detect sign change
-      if ((previousAvgValue > 0 && avgValue < 0) || (previousAvgValue < 0 && avgValue > 0) ) {
+      if (did_sign_change(previousAvgValue, avgValue)) {
         // Store measurements around the current voltage
         for (int i = 0; i < rangeSamples; i++) {
           float lowerVoltage = currentAmpCompCalibrationVal - (i + 1);
           float higherVoltage = currentAmpCompCalibrationVal + (i + 1);
 
-          voice_task_autotune(0, lowerVoltage);
-          lowerMeasurements[i] = find_gap(0);
+          lowerMeasurements[i] = measure_gap_for_amp(lowerVoltage);
           lowerVoltages[i] = lowerVoltage;
 
-          voice_task_autotune(0, higherVoltage);
-          higherMeasurements[i] = find_gap(0);
+          higherMeasurements[i] = measure_gap_for_amp(higherVoltage);
           higherVoltages[i] = higherVoltage;
         }
 
