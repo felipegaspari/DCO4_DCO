@@ -77,9 +77,8 @@ void init_FS() {
     // delay(1000);
     // Serial.println((String) "PW_CENTER " + i + (String) ": " + uint16Data);
   }
-  /* 
-//  PW_HIGH_LIMIT
-    if (!LittleFS.exists("PWHighLimit")) {
+  // PW_HIGH_LIMIT
+  if (!LittleFS.exists("PWHighLimit")) {
     filePWHighLimitFS = LittleFS.open("PWHighLimit", "w+");
   } else {
     filePWHighLimitFS = LittleFS.open("PWHighLimit", "r");
@@ -88,14 +87,16 @@ void init_FS() {
   filePWHighLimitFS.read(PWHighLimitBankBuffer, FSPWBankSize);
   filePWHighLimitFS.close();
 
-     for (int  i = 0; i < NUM_VOICES_TOTAL; i++) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     uint16_t uint16Data;
-    for (int j = 0; j < 2; j++) {
+    for (int j = 0; j < FSPWDataSize; j++) {
       ((uint8_t *)&uint16Data)[j] = PWHighLimitBankBuffer[i * 2 + j];
     }
     PW_HIGH_LIMIT[i] = (uint16_t)uint16Data;
-  } 
-*/
+
+    // // Debug:
+    // // Serial.println((String) "PW_HIGH_LIMIT " + i + (String) ": " + uint16Data);
+  }
   // PW_LOW_LIMIT
   if (!LittleFS.exists("PWLowLimit")) {
     filePWLowLimitFS = LittleFS.open("PWLowLimit", "w+");
