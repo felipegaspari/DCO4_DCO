@@ -4,6 +4,9 @@
 #include "autotune_context.h"
 
 // Return true if the two values have opposite signs (simple sign change test).
+// Used by calibrate_DCO() to detect when the duty-cycle error has crossed
+// through zero between successive measurements (indicating we've passed the
+// ideal PWM point and should probe neighbours more carefully).
 static bool did_sign_change(float previous, float current) {
   return (previous > 0.0f && current < 0.0f) ||
          (previous < 0.0f && current > 0.0f);
@@ -11,11 +14,119 @@ static bool did_sign_change(float previous, float current) {
 
 // Helper: set the current DCO amplitude, wait for the waveform to settle,
 // and return the measured duty-cycle gap (or timeout sentinel value).
+// This centralizes the "write PWM, delay, measure gap" pattern so that
+// calibrate_DCO() stays focused on the search logic instead of timing details.
 static float measure_gap_for_amp(uint16_t ampPwm) {
   voice_task_autotune(0, ampPwm);
   delay(10);
   GapMeasurement gm = measure_gap(0);
   return gm.value;
+}
+
+// Helper: evaluate neighbour measurements (lower/higher) around the current
+// voltage and update closestToZero / bestAmpComp if any of them are better.
+// The caller passes in the measurements taken one step below and above the
+// current PWM value; this routine picks the best candidate among those and
+// the current PWM, based purely on closeness of the duty error to zero.
+static void update_best_from_neighbours(
+  int rangeSamples,
+  const float* lowerMeasurements,
+  const uint16_t* lowerVoltages,
+  const float* higherMeasurements,
+  const uint16_t* higherVoltages,
+  float avgValue,
+  float& closestToZero,
+  uint16_t& bestAmpComp,
+  uint16_t currentAmpCompCalibrationVal
+) {
+  // Evaluate stored measurements including the current voltage
+  for (int i = 0; i < rangeSamples; i++) {
+    if (abs(lowerMeasurements[i]) < abs(closestToZero)) {
+      closestToZero = lowerMeasurements[i];
+      bestAmpComp = lowerVoltages[i];
+    }
+    if (abs(higherMeasurements[i]) < abs(closestToZero)) {
+      closestToZero = higherMeasurements[i];
+      bestAmpComp = higherVoltages[i];
+    }
+  }
+
+  // Check the current voltage again
+  if (abs(avgValue) < abs(closestToZero)) {
+    closestToZero = avgValue;
+    bestAmpComp = currentAmpCompCalibrationVal;
+  }
+}
+
+// Helper: update the calibration PWM based on the current error and tolerance.
+// For large errors we step the PWM in units of 2; once we get close to the
+// target (within tolerance * 20) we only step by 1 to avoid overshooting.
+static void step_amp_from_error(float avgValue, double tolerance, uint16_t& currentAmpCompCalibrationVal) {
+  // Adjust the voltage based on the measurement
+  if (abs(avgValue) < tolerance * 20) {
+    if (avgValue > 0) {
+      currentAmpCompCalibrationVal += 1;
+    } else {
+      currentAmpCompCalibrationVal -= 1;
+    }
+  } else {
+    if (avgValue > 0) {
+      currentAmpCompCalibrationVal += 2;
+    } else {
+      currentAmpCompCalibrationVal -= 2;
+    }
+  }
+}
+
+// Helper: compute the initial amplitude (range PWM) guess for a given table
+// index j and note, using the same interpolation strategy as the original code:
+//  - j == 4: manual preset scaled by 1.35,
+//  - j == 6: logarithmic interpolation between the first two entries,
+//  - else : quadratic interpolation based on the previous three calibration points.
+static uint16_t compute_initial_amp_for_note(
+  const DCOCalibrationContext& ctx,
+  int j
+) {
+  if (j == 4) {
+    return (ctx.initManualAmpByOsc[ctx.dcoIndex] + ctx.manualOffsetByOsc[ctx.dcoIndex]) * 1.35;
+  } else if (j == 6) {
+    return logarithmicInterpolation(
+      ctx.calibrationData[2],
+      ctx.calibrationData[3],
+      ctx.calibrationData[4],
+      ctx.calibrationData[5],
+      sNotePitches[ctx.currentNote - 12] * 100
+    );
+  } else {
+    return quadraticInterpolation(
+      ctx.calibrationData[j - 6],
+      ctx.calibrationData[j - 5],
+      ctx.calibrationData[j - 4],
+      ctx.calibrationData[j - 3],
+      ctx.calibrationData[j - 2],
+      ctx.calibrationData[j - 1],
+      sNotePitches[ctx.currentNote - 12] * 100
+    );
+  }
+}
+
+// Helper: store the final calibration pair for the current note into the
+// calibration table and print a short summary to Serial.
+static void store_note_result(
+  DCOCalibrationContext& ctx,
+  int j,
+  uint16_t bestAmpComp,
+  float closestToZero
+) {
+  ctx.calibrationData[j]     = sNotePitches[ctx.currentNote - 12] * 100;
+  ctx.calibrationData[j + 1] = bestAmpComp;
+
+  Serial.print("DCO_calibration_current_note ");
+  Serial.println(ctx.currentNote);
+  Serial.print("Best calibration voltage: ");
+  Serial.println(bestAmpComp);
+  Serial.print("Closest measurement to zero: ");
+  Serial.println(closestToZero);
 }
 
 // Initialize the global PID controller used by some legacy calibration
@@ -341,26 +452,25 @@ float find_lowest_freq() {
 }
 #endif  // LEGACY_FIND_LOWEST_FREQ
 
+// Build the [frequency -> amplitude PWM] calibration table for the DCO in ctx.
+// For each calibration note it:
+//  - Picks an initial PWM guess (via interpolation),
+//  - Searches locally for the PWM that makes the duty error closest to zero,
+//  - Stores the best PWM together with the note frequency in ctx.calibrationData.
 void calibrate_DCO(DCOCalibrationContext& ctx) {
 
-  double tolerance;      // minGap
-  uint16_t minAmpComp;   // Lower Limit
-  uint16_t maxAmpComp;   //  Higher Limit
-  int rangeSamples = 2;  // Number of measurements to store around the sign change
-  const int numPresetVoltages = chanLevelVoiceDataSize;
+  double tolerance;      // Allowed absolute duty error (in microseconds) for a given note.
+  uint16_t minAmpComp;   // Lower bound for the PWM search around the initial guess.
+  uint16_t maxAmpComp;   // Upper bound for the PWM search around the initial guess.
+  int rangeSamples = 2;  // Number of neighbour voltages to probe around a sign change.
+  const int numPresetVoltages = chanLevelVoiceDataSize;  // Size of the [freq, pwm] table.
 
   for (int j = 4; j < numPresetVoltages; j += 2) {  // Start from the 3rd preset voltage
     uint16_t currentAmpCompCalibrationVal;
 
     ctx.currentNote = DCO_calibration_start_note + (calibration_note_interval * (j - 4) / 2);
     VOICE_NOTES[0] = ctx.currentNote;
-    if (j == 4) {
-      currentAmpCompCalibrationVal = (ctx.initManualAmpByOsc[ctx.dcoIndex] + ctx.manualOffsetByOsc[ctx.dcoIndex]) * 1.35;
-    } else if (j == 6) {
-      currentAmpCompCalibrationVal = logarithmicInterpolation(ctx.calibrationData[2], ctx.calibrationData[3], ctx.calibrationData[4], ctx.calibrationData[5], sNotePitches[ctx.currentNote - 12] * 100);
-    } else {
-      currentAmpCompCalibrationVal = quadraticInterpolation(ctx.calibrationData[j - 6], ctx.calibrationData[j - 5], ctx.calibrationData[j - 4], ctx.calibrationData[j - 3], ctx.calibrationData[j - 2], ctx.calibrationData[j - 1], sNotePitches[ctx.currentNote - 12] * 100);
-    }
+    currentAmpCompCalibrationVal = compute_initial_amp_for_note(ctx, j);
 
     if (currentAmpCompCalibrationVal > DIV_COUNTER * 0.98) {
       float highestFreqFound = find_highest_freq();
@@ -374,10 +484,13 @@ void calibrate_DCO(DCOCalibrationContext& ctx) {
       break;
     }
 
-    uint16_t minAmpComp = currentAmpCompCalibrationVal * 0.8;  // Lower Limit
-    uint16_t maxAmpComp = currentAmpCompCalibrationVal * 1.3;  //  Higher Limit
+    uint16_t minAmpComp = currentAmpCompCalibrationVal * 0.8;  // Lower Limit for this note.
+    uint16_t maxAmpComp = currentAmpCompCalibrationVal * 1.3;  // Upper Limit for this note.
 
-    //tolerance = (double)(37701.182837 * pow(0.855327, (double)ctx.currentNote));
+    // Old formula for tolerance (kept for reference):
+    // tolerance = (double)(37701.182837 * pow(0.855327, (double)ctx.currentNote));
+    // Current formula: tolerance scales with the square of the period (1/f^2)
+    // so that higher notes demand tighter absolute timing precision.
     tolerance = (double)1000000.00 / (double)sNotePitches[VOICE_NOTES[0] - 12] /  (double)sNotePitches[VOICE_NOTES[0] - 12] / 4.00d;
 
     Serial.println((String) "Current DCO: " + ctx.dcoIndex);
@@ -391,22 +504,23 @@ void calibrate_DCO(DCOCalibrationContext& ctx) {
     voice_task_autotune(0, currentAmpCompCalibrationVal);  // Send the preset voltage
     delay(10);
 
-    uint16_t bestAmpComp = currentAmpCompCalibrationVal;
-    float closestToZero = 50000;  // Initialize with a large value
-    float previousAvgValue = 0.0;
+    uint16_t bestAmpComp = currentAmpCompCalibrationVal;  // Best PWM found so far for this note.
+    float closestToZero = 50000;  // Smallest absolute duty error seen so far.
+    float previousAvgValue = 0.0; // Duty error from the previous iteration (for sign-change detection).
 
-    float lowerMeasurements[rangeSamples];
-    float higherMeasurements[rangeSamples];
-    uint16_t lowerVoltages[rangeSamples];
-    uint16_t higherVoltages[rangeSamples];
+    float lowerMeasurements[rangeSamples];   // Duty errors measured at lower neighbour PWMs.
+    float higherMeasurements[rangeSamples];  // Duty errors measured at higher neighbour PWMs.
+    uint16_t lowerVoltages[rangeSamples];    // PWM values used for lowerMeasurements[].
+    uint16_t higherVoltages[rangeSamples];   // PWM values used for higherMeasurements[].
 
-    int flipCounter = 0;
+    int flipCounter = 0;  // Count of successive sign changes; used to relax tolerance if the search oscillates.
 
     while (true) {
       float avgValue = measure_gap_for_amp(currentAmpCompCalibrationVal);
 
-      // Keep existing behaviour but avoid hard-coded sentinel literal.
-      if (abs(avgValue) < abs(closestToZero && avgValue != kGapTimeoutSentinel)) {
+      // Update best candidate only if the measurement is valid (not a timeout)
+      // and closer to zero than what we've seen before.
+      if (avgValue != kGapTimeoutSentinel && abs(avgValue) < abs(closestToZero)) {
         closestToZero = avgValue;
         bestAmpComp = currentAmpCompCalibrationVal;
       } else {
@@ -427,23 +541,17 @@ void calibrate_DCO(DCOCalibrationContext& ctx) {
           higherVoltages[i] = higherVoltage;
         }
 
-        // Evaluate stored measurements including the current voltage
-        for (int i = 0; i < rangeSamples; i++) {
-          if (abs(lowerMeasurements[i]) < abs(closestToZero)) {
-            closestToZero = lowerMeasurements[i];
-            bestAmpComp = lowerVoltages[i];
-          }
-          if (abs(higherMeasurements[i]) < abs(closestToZero)) {
-            closestToZero = higherMeasurements[i];
-            bestAmpComp = higherVoltages[i];
-          }
-        }
-
-        // Check the current voltage again
-        if (abs(avgValue) < abs(closestToZero)) {
-          closestToZero = avgValue;
-          bestAmpComp = currentAmpCompCalibrationVal;
-        }
+        update_best_from_neighbours(
+          rangeSamples,
+          lowerMeasurements,
+          lowerVoltages,
+          higherMeasurements,
+          higherVoltages,
+          avgValue,
+          closestToZero,
+          bestAmpComp,
+          currentAmpCompCalibrationVal
+        );
 
         // Break the loop if the closest value is within tolerance
         if (abs(closestToZero) <= tolerance) {
@@ -459,20 +567,7 @@ void calibrate_DCO(DCOCalibrationContext& ctx) {
         }
       }
 
-      // Adjust the voltage based on the measurement
-      if (abs(avgValue) < tolerance * 20) {
-        if (avgValue > 0) {
-          currentAmpCompCalibrationVal += 1;
-        } else {
-          currentAmpCompCalibrationVal -= 1;
-        }
-      } else {
-        if (avgValue > 0) {
-          currentAmpCompCalibrationVal += 2;
-        } else {
-          currentAmpCompCalibrationVal -= 2;
-        }
-      }
+      step_amp_from_error(avgValue, tolerance, currentAmpCompCalibrationVal);
 
       // Ensure the voltage stays within the allowed range
       if (currentAmpCompCalibrationVal < minAmpComp || currentAmpCompCalibrationVal > maxAmpComp) {
@@ -482,15 +577,7 @@ void calibrate_DCO(DCOCalibrationContext& ctx) {
       previousAvgValue = avgValue;
     }
 
-    calibrationData[j] = sNotePitches[DCO_calibration_current_note - 12] * 100;
-    calibrationData[j + 1] = bestAmpComp;  // Store the best voltage for the current preset voltage
-
-    Serial.print("DCO_calibration_current_note ");
-    Serial.println(DCO_calibration_current_note);
-    Serial.print("Best calibration voltage: ");
-    Serial.println(bestAmpComp);
-    Serial.print("Closest measurement to zero: ");
-    Serial.println(closestToZero);
+    store_note_result(ctx, j, bestAmpComp, closestToZero);
   }
 }
 
