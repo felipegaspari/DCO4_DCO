@@ -864,12 +864,17 @@ void find_PW_limit(PWLimitDir dir) {
   uint16_t minPW = (dir == PW_LIMIT_LOW)  ? 0           : centerPW;
   uint16_t maxPW = (dir == PW_LIMIT_LOW)  ? centerPW    : DIV_COUNTER_PW;
 
-  // Direction-dependent target duty and log labels.
-  double targetDuty = (dir == PW_LIMIT_LOW) ? kPWLowDutyFraction : kPWHighDutyFraction;
+  // Direction-dependent target duty for the **low** portion of the cycle.
+  // For the low limit we want low duty ≈ kPWLowDutyFraction (e.g. 2%).
+  // For the high limit we want high duty ≈ kPWHighDutyFraction (e.g. 98%),
+  // which corresponds to low duty ≈ (1 - kPWHighDutyFraction).
+  double targetDutyLow = (dir == PW_LIMIT_LOW)
+                         ? kPWLowDutyFraction
+                         : (1.0 - kPWHighDutyFraction);
 
   // Update global logging context for gap measurements during PW-limit search.
   g_gapLogCurrentPeriodUs    = periodUs;
-  g_gapLogTargetDutyFraction = targetDuty;
+  g_gapLogTargetDutyFraction = targetDutyLow;
 
   double finalDutyPercent = 666.66;
 
@@ -877,13 +882,13 @@ void find_PW_limit(PWLimitDir dir) {
   voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
   delay(100);
 
-  const char *scanTag       = (dir == PW_LIMIT_LOW) ? "[PW_LOW_SCAN]"          : "[PW_HIGH_SCAN]";
-  const char *refCrossTag   = (dir == PW_LIMIT_LOW) ? "[PW_LOW_REFINE_CROSS]"  : "[PW_HIGH_REFINE_CROSS]";
-  const char *refTimeoutTag = (dir == PW_LIMIT_LOW) ? "[PW_LOW_REFINE_TIMEOUT]": "[PW_HIGH_REFINE_TIMEOUT]";
-  const char *scanFineTag   = (dir == PW_LIMIT_LOW) ? "[PW_LOW_SCAN_FINE]"     : "[PW_HIGH_SCAN_FINE]";
-  const char *rescanFineTag = (dir == PW_LIMIT_LOW) ? "[PW_LOW_RESCAN_FINE]"   : "[PW_HIGH_RESCAN_FINE]";
-  const char *abortTag      = (dir == PW_LIMIT_LOW) ? "[PW_LOW_ABORT_NO_SIGNAL]": "[PW_HIGH_ABORT_NO_SIGNAL]";
-  const char *resultTag     = (dir == PW_LIMIT_LOW) ? "[PW_LOW_RESULT]"        : "[PW_HIGH_RESULT]";
+  const char *scanTag        = (dir == PW_LIMIT_LOW) ? "[PW_LOW_SCAN]"          : "[PW_HIGH_SCAN]";
+  const char *refCrossTag    = (dir == PW_LIMIT_LOW) ? "[PW_LOW_REFINE_CROSS]"  : "[PW_HIGH_REFINE_CROSS]";
+  const char *refTimeoutTag  = (dir == PW_LIMIT_LOW) ? "[PW_LOW_REFINE_TIMEOUT]": "[PW_HIGH_REFINE_TIMEOUT]";
+  const char *scanFineTag    = (dir == PW_LIMIT_LOW) ? "[PW_LOW_SCAN_FINE]"     : "[PW_HIGH_SCAN_FINE]";
+  const char *rescanFineTag  = (dir == PW_LIMIT_LOW) ? "[PW_LOW_RESCAN_FINE]"   : "[PW_HIGH_RESCAN_FINE]";
+  const char *abortTag       = (dir == PW_LIMIT_LOW) ? "[PW_LOW_ABORT_NO_SIGNAL]": "[PW_HIGH_ABORT_NO_SIGNAL]";
+  const char *resultTag      = (dir == PW_LIMIT_LOW) ? "[PW_LOW_RESULT]"        : "[PW_HIGH_RESULT]";
 
   // Step size for scanning from center.
   uint16_t step = DIV_COUNTER_PW / 64;
@@ -940,12 +945,12 @@ void find_PW_limit(PWLimitDir dir) {
                        (String)" note=" + DCO_calibration_current_note +
                        (String)" DCO=" + currentDCO +
                        (String)" PW_raw=" + pw +
-                       (String)" duty=" + (duty * 100.0) + "%" +
-                       (String)" targetDuty=" + (targetDuty * 100.0) + "%");
+                       (String)" lowDuty=" + (duty * 100.0) + "%" +
+                       (String)" targetLowDuty=" + (targetDutyLow * 100.0) + "%");
       }
 
       // Update global best coarse sample w.r.t. target.
-      double deltaCoarse = fabs(duty - targetDuty);
+      double deltaCoarse = fabs(duty - targetDutyLow);
       if (!haveBestCoarse || deltaCoarse < bestCoarseDelta) {
         haveBestCoarse  = true;
         bestCoarseDelta = deltaCoarse;
@@ -953,15 +958,12 @@ void find_PW_limit(PWLimitDir dir) {
       }
 
       // Count samples that are close to the target duty as "in tolerance".
-      if (fabs(duty - targetDuty) <= kPWLimitDutyTolerance) {
+      if (fabs(duty - targetDutyLow) <= kPWLimitDutyTolerance) {
         inToleranceCount++;
     }
 
-      bool crossed = (dir == PW_LIMIT_LOW) ? (duty <= targetDuty)
-                                           : (duty >= targetDuty);
-      bool prevOnOtherSide = (dir == PW_LIMIT_LOW)
-                             ? (havePrevValid && prevDuty > targetDuty)
-                             : (havePrevValid && prevDuty < targetDuty);
+      bool crossed = (duty <= targetDutyLow);
+      bool prevOnOtherSide = havePrevValid && (prevDuty > targetDutyLow);
 
       if (crossed) {
         // We have reached or passed the target duty.
@@ -970,7 +972,7 @@ void find_PW_limit(PWLimitDir dir) {
           // the target. Refine with step=1 to find the PW that gets as
           // close as possible to the target.
           uint16_t bestPWLocal   = prevPW;
-          double   bestDeltaLocal= fabs(prevDuty - targetDuty);
+          double   bestDeltaLocal= fabs(prevDuty - targetDutyLow);
 
           if (autotuneDebug >= 2) {
             Serial.println((String)refCrossTag +
@@ -999,9 +1001,9 @@ void find_PW_limit(PWLimitDir dir) {
             }
 
             double gapFine = (double)gmFine.value;
-            double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
+            double dutyErrorFracFine = gapFine / (2.0 * periodUs);
             double dutyFine = 0.5 + dutyErrorFracFine;
-              double deltaFine = fabs(dutyFine - targetDuty);
+            double   deltaFine = fabs(dutyFine - targetDutyLow);
 
             if (autotuneDebug >= 3) {
                 Serial.println((String)"[PW_REFINE_SAMPLE] PW_raw=" + pwFine +
@@ -1037,9 +1039,9 @@ void find_PW_limit(PWLimitDir dir) {
         }
 
         double gapFine = (double)gmFine.value;
-        double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
+        double dutyErrorFracFine = gapFine / (2.0 * periodUs);
         double dutyFine = 0.5 + dutyErrorFracFine;
-              double deltaFine = fabs(dutyFine - targetDuty);
+        double deltaFine = fabs(dutyFine - targetDutyLow);
 
               if (autotuneDebug >= 3) {
                 Serial.println((String)"[PW_REFINE_SAMPLE] PW_raw=" + pwFine +
@@ -1080,11 +1082,11 @@ void find_PW_limit(PWLimitDir dir) {
       double   bestDeltaLocal = bestCoarseDelta;
 
     if (autotuneDebug >= 1) {
-        Serial.println((String)refTimeoutTag +
-                       (String)" note=" + DCO_calibration_current_note +
+      Serial.println((String)refTimeoutTag +
+                     (String)" note=" + DCO_calibration_current_note +
                      (String)" DCO=" + currentDCO +
-                       (String)" startPW=" + bestCoarsePW);
-      }
+                     (String)" startPW=" + bestCoarsePW);
+    }
 
       if (dir == PW_LIMIT_LOW) {
         int consecutiveTimeouts = 0;
@@ -1112,7 +1114,7 @@ void find_PW_limit(PWLimitDir dir) {
           double gapFine = (double)gmFine.value;
           double dutyErrorFracFine = gapFine / (2.0 * periodUs);
           double dutyFine = 0.5 + dutyErrorFracFine;
-          double deltaFine = fabs(dutyFine - targetDuty);
+          double deltaFine = fabs(dutyFine - targetDutyLow);
 
           if (deltaFine < bestDeltaLocal) {
             bestDeltaLocal = deltaFine;
@@ -1146,7 +1148,7 @@ void find_PW_limit(PWLimitDir dir) {
           double gapFine = (double)gmFine.value;
           double dutyErrorFracFine = gapFine / (2.0 * periodUs);
           double dutyFine = 0.5 + dutyErrorFracFine;
-          double deltaFine = fabs(dutyFine - targetDuty);
+          double deltaFine = fabs(dutyFine - targetDutyLow);
 
           if (deltaFine < bestDeltaLocal) {
             bestDeltaLocal = deltaFine;
@@ -1228,18 +1230,15 @@ void find_PW_limit(PWLimitDir dir) {
             Serial.println((String)scanFineTag +
                            (String)" PW=" + pw +
                            (String)" gap=" + gap +
-                           (String)"us duty=" + (duty * 100.0) + "%");
+                           (String)"us lowDuty=" + (duty * 100.0) + "%");
           }
 
-          if (fabs(duty - targetDuty) <= kPWLimitDutyTolerance) {
+          if (fabs(duty - targetDutyLow) <= kPWLimitDutyTolerance) {
             inToleranceCount++;
           }
 
-          bool crossed = (dir == PW_LIMIT_LOW) ? (duty <= targetDuty)
-                                               : (duty >= targetDuty);
-          bool prevOnOtherSide = (dir == PW_LIMIT_LOW)
-                                 ? (havePrevValid && prevDuty > targetDuty)
-                                 : (havePrevValid && prevDuty < targetDuty);
+          bool crossed = (duty <= targetDutyLow);
+          bool prevOnOtherSide = havePrevValid && (prevDuty > targetDutyLow);
 
           if (crossed) {
             if (prevOnOtherSide) {
@@ -1314,12 +1313,20 @@ void find_PW_limit(PWLimitDir dir) {
         finalDutyPercent = (0.5 + dutyErrorFrac) * 100.0;
       }
     }
+    double targetLowDutyPercent =
+      (dir == PW_LIMIT_LOW)
+        ? (kPWLowDutyFraction * 100.0)
+        : ((1.0 - kPWHighDutyFraction) * 100.0);
+    double targetHighDutyPercent = kPWHighDutyFraction * 100.0;
     Serial.println((String)resultTag +
                    (String)" note=" + DCO_calibration_current_note +
                    (String)" DCO=" + currentDCO +
                    (String)" PW_LIMIT=" + limitPW +
-                   (String)" duty≈" + finalDutyPercent + "%" +
-                   (String)" targetDuty=" + (targetDuty * 100.0) + "%");
+                   (String)" lowDuty≈" + finalDutyPercent + "%" +
+                   (String)" targetLowDuty=" + targetLowDutyPercent + "%" +
+                   (dir == PW_LIMIT_LOW
+                      ? (String)""
+                      : (String)" targetHighDuty=" + targetHighDutyPercent + "%"));
   }
 
   if (dir == PW_LIMIT_LOW) {
@@ -1327,18 +1334,19 @@ void find_PW_limit(PWLimitDir dir) {
     Serial.println("PW low limit found !!!");
     Serial.println(
                    (String)" PW_LIMIT=" + limitPW +
-                   (String)" duty≈" + finalDutyPercent + "%" +
-                   (String)" targetDuty=" + (targetDuty * 100.0) + "%");    
+                   (String)" lowDuty≈" + finalDutyPercent + "%" +
+                   (String)" targetLowDuty=" + (kPWLowDutyFraction * 100.0) + "%");
     Serial.println("--------------------------------");
     update_FS_PW_Low_Limit(voiceIdx, limitPW);
     PW_LOW_LIMIT[voiceIdx] = limitPW;
   } else {
     Serial.println("--------------------------------");
-  Serial.println("PW high limit found !!!");
+    Serial.println("PW high limit found !!!");
     Serial.println(
                    (String)" PW_LIMIT=" + limitPW +
-                   (String)" duty≈" + finalDutyPercent + "%" +
-                   (String)" targetDuty=" + (targetDuty * 100.0) + "%");    
+                   (String)" lowDuty≈" + finalDutyPercent + "%" +
+                   (String)" targetLowDuty=" + ((1.0 - kPWHighDutyFraction) * 100.0) + "%" +
+                   (String)" targetHighDuty=" + (kPWHighDutyFraction * 100.0) + "%");
     Serial.println("--------------------------------");
     update_FS_PW_High_Limit(voiceIdx, limitPW);
     PW_HIGH_LIMIT[voiceIdx] = limitPW;
@@ -1496,9 +1504,9 @@ float find_gap(byte specialMode) {
                      (String)" avgLowUs=" + avgLowUs +
                      (String)" avgHighUs=" + avgHighUs +
                      (String)" T_meas=" + measuredPeriodUs +
-                     (String)" duty_meas≈" + dutyPercentMeasured + "%" +
-                     (String)" duty_ideal≈" + dutyPercentIdeal + "%" +
-                     (String)" targetDuty=" + targetDutyPercent + "%");
+                     (String)" duty_low_meas≈" + dutyPercentMeasured + "%" +
+                     (String)" duty_low_ideal≈" + dutyPercentIdeal + "%" +
+                     (String)" targetLowDuty=" + targetDutyPercent + "%");
     }
 
     

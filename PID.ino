@@ -535,15 +535,26 @@ void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
       float avgValue = measure_gap_for_amp(currentAmpCompCalibrationVal);
 
       // Optional debug: report current duty and tolerance when enabled.
+      // Treat timeout sentinel specially so we don't fake a 50% duty reading.
       if (autotuneDebug >= 2 && periodUs > 0.0) {
-        double dutyErrorFrac = -(double)avgValue / (2.0 * periodUs);
-        double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
-        Serial.println((String)"[DCO_AMP_SCAN] note=" + ctx.currentNote +
-                       (String)" DCO=" + ctx.dcoIndex +
-                       (String)" AMP=" + currentAmpCompCalibrationVal +
-                       (String)" gap=" + avgValue +
-                       (String)"us duty=" + dutyPercent +
-                       (String)"% target=50% tol≈" + toleranceDutyPercent + "%");
+        if (avgValue == kGapTimeoutSentinel) {
+          Serial.println((String)"[DCO_AMP_SCAN] note=" + ctx.currentNote +
+                         (String)" DCO=" + ctx.dcoIndex +
+                         (String)" AMP=" + currentAmpCompCalibrationVal +
+                         (String)" gap=TIMEOUT" +
+                         (String)" duty=NA target=50% tol≈" + toleranceDutyPercent + "%");
+        } else {
+          // avgValue is the same DCO_calibration_difference used elsewhere:
+          // positive => low segment longer (duty < 50%), negative => high longer.
+          double dutyErrorFrac = (double)avgValue / (2.0 * periodUs);
+          double dutyPercent   = (0.5 + dutyErrorFrac) * 100.0;
+          Serial.println((String)"[DCO_AMP_SCAN] note=" + ctx.currentNote +
+                         (String)" DCO=" + ctx.dcoIndex +
+                         (String)" AMP=" + currentAmpCompCalibrationVal +
+                         (String)" gap=" + avgValue +
+                         (String)"us duty=" + dutyPercent +
+                         (String)"% target=50% tol≈" + toleranceDutyPercent + "%");
+        }
       }
 
       // Update best candidate only if the measurement is valid (not a timeout)
