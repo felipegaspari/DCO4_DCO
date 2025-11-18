@@ -123,7 +123,10 @@ enum ParamId : uint16_t {
   PARAM_MANUAL_CALIBRATION_OFFSET= 153,
 
   // 154: mainboard-only gap-from-DCO parameter (screen reporting)
-  PARAM_GAP_FROM_DCO             = 154
+  PARAM_GAP_FROM_DCO             = 154,
+
+  // 155: manual calibration offsets reported from DCO back to mainboard/screen.
+  PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO = 155
 };
 
 #endif  // PARAMS_DEF_H

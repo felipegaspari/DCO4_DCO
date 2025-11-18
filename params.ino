@@ -254,16 +254,26 @@ static void apply_param_calibration_flag(int16_t v) {
 
 static void apply_param_manual_calibration_flag(int16_t v) {
   // When manual calibration is active, both flags follow this param.
-  // When it is turned off (v == 0), persist the final per‑oscillator
-  // manualCalibrationOffset[] values to the filesystem so they survive reboot.
-  if (v == 0) {
-    // Manual stage ended – commit all offsets in one batch.
+  // Rising edge (0 -> non-zero): broadcast current offsets to mainboard/UI.
+  if (v != 0 && !manualCalibrationFlag) {
+    for (uint8_t osc = 0; osc < NUM_OSCILLATORS; ++osc) {
+      uint8_t idx    = osc;
+      uint8_t offset = (uint8_t)manualCalibrationOffset[osc];
+      uint16_t packed = ((uint16_t)idx << 8) | offset;
+      // Send as 32-bit frame; receivers use lower 16 bits [index:8|offset:8].
+      serialSendParam32(PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO, (uint32_t)packed);
+    }
+  }
+
+  // Falling edge (non-zero -> 0): persist final offsets to FS.
+  if (v == 0 && manualCalibrationFlag) {
     for (uint8_t osc = 0; osc < NUM_OSCILLATORS; ++osc) {
       update_FS_ManualCalibrationOffset(osc, manualCalibrationOffset[osc]);
     }
   }
+
   manualCalibrationFlag = v;
-  calibrationFlag = v;
+  calibrationFlag       = v;
 }
 
 static void apply_param_manual_calibration_stage(int16_t v) {
