@@ -981,64 +981,64 @@ void find_PW_limit(PWLimitDir dir) {
           }
 
           if (dir == PW_LIMIT_LOW) {
-            for (uint16_t pwFine = prevPW; pwFine >= pw; --pwFine) {
+          for (uint16_t pwFine = prevPW; pwFine >= pw; --pwFine) {
               if (pwFine < minPW) break;
-              pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
-                                 pwm_gpio_to_channel(PW_PINS[voiceIdx]),
-                                 pwFine);
+            pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                               pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                               pwFine);
               PW[voiceIdx]           = pwFine;
               g_lastPWMeasurementRaw = pwFine;
-              delay(30);
+            delay(30);
 
-              GapMeasurement gmFine = measure_gap(2);
-              if (gmFine.timedOut || periodUs <= 0.0) {
-                if (autotuneDebug >= 3) {
+            GapMeasurement gmFine = measure_gap(2);
+            if (gmFine.timedOut || periodUs <= 0.0) {
+              if (autotuneDebug >= 3) {
                   Serial.println((String)"[PW_REFINE_GAP_TIMEOUT] PW_raw=" + pwFine);
-                }
-                continue;
               }
+              continue;
+            }
 
-              double gapFine = (double)gmFine.value;
-              double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
-              double dutyFine = 0.5 + dutyErrorFracFine;
+            double gapFine = (double)gmFine.value;
+            double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
+            double dutyFine = 0.5 + dutyErrorFracFine;
               double deltaFine = fabs(dutyFine - targetDuty);
 
-              if (autotuneDebug >= 3) {
+            if (autotuneDebug >= 3) {
                 Serial.println((String)"[PW_REFINE_SAMPLE] PW_raw=" + pwFine +
-                               (String)" duty=" + (dutyFine * 100.0) + "%" +
-                               (String)" |Δ|=" + (deltaFine * 100.0) + "%");
-              }
-
-              if (deltaFine < bestDeltaLocal) {
-                bestDeltaLocal = deltaFine;
-                bestPWLocal    = pwFine;
-              }
-
-              if (pwFine == 0) {
-                break;
-              }
+                             (String)" duty=" + (dutyFine * 100.0) + "%" +
+                             (String)" |Δ|=" + (deltaFine * 100.0) + "%");
             }
+
+            if (deltaFine < bestDeltaLocal) {
+              bestDeltaLocal = deltaFine;
+              bestPWLocal    = pwFine;
+            }
+
+            if (pwFine == 0) {
+              break;
+            }
+          }
           } else { // PW_LIMIT_HIGH
             for (uint16_t pwFine = prevPW; pwFine <= pw; ++pwFine) {
               if (pwFine > maxPW) break;
-              pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
-                                 pwm_gpio_to_channel(PW_PINS[voiceIdx]),
-                                 pwFine);
+        pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                           pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                           pwFine);
               PW[voiceIdx]           = pwFine;
               g_lastPWMeasurementRaw = pwFine;
-              delay(30);
+        delay(30);
 
-              GapMeasurement gmFine = measure_gap(2);
-              if (gmFine.timedOut || periodUs <= 0.0) {
+        GapMeasurement gmFine = measure_gap(2);
+        if (gmFine.timedOut || periodUs <= 0.0) {
                 if (autotuneDebug >= 3) {
                   Serial.println((String)"[PW_REFINE_GAP_TIMEOUT] PW_raw=" + pwFine);
                 }
-                continue;
-              }
+          continue;
+        }
 
-              double gapFine = (double)gmFine.value;
-              double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
-              double dutyFine = 0.5 + dutyErrorFracFine;
+        double gapFine = (double)gmFine.value;
+        double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
+        double dutyFine = 0.5 + dutyErrorFracFine;
               double deltaFine = fabs(dutyFine - targetDuty);
 
               if (autotuneDebug >= 3) {
@@ -1047,15 +1047,15 @@ void find_PW_limit(PWLimitDir dir) {
                                (String)" |Δ|=" + (deltaFine * 100.0) + "%");
               }
 
-              if (deltaFine < bestDeltaLocal) {
-                bestDeltaLocal = deltaFine;
-                bestPWLocal    = pwFine;
-              }
+        if (deltaFine < bestDeltaLocal) {
+          bestDeltaLocal = deltaFine;
+          bestPWLocal    = pwFine;
+        }
 
               if (pwFine >= DIV_COUNTER_PW - 1) {
-                break;
-              }
-            }
+        break;
+      }
+    }
           }
 
           limitPW = bestPWLocal;
@@ -1087,6 +1087,7 @@ void find_PW_limit(PWLimitDir dir) {
       }
 
       if (dir == PW_LIMIT_LOW) {
+        int consecutiveTimeouts = 0;
         for (uint16_t pwFine = bestCoarsePW; pwFine > 0; --pwFine) {
           if (pwFine < minPW) break;
           pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
@@ -1098,12 +1099,18 @@ void find_PW_limit(PWLimitDir dir) {
 
           GapMeasurement gmFine = measure_gap(2);
           if (gmFine.timedOut || periodUs <= 0.0) {
-            // Once we start consistently losing signal we can stop refining.
+            // Once we start consistently losing signal we can stop refining
+            // after a few consecutive timeouts to avoid spending a long time
+            // deep in the invalid region.
+            if (++consecutiveTimeouts >= 4) {
+              break;
+            }
             continue;
           }
+          consecutiveTimeouts = 0;
 
           double gapFine = (double)gmFine.value;
-          double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
+          double dutyErrorFracFine = gapFine / (2.0 * periodUs);
           double dutyFine = 0.5 + dutyErrorFracFine;
           double deltaFine = fabs(dutyFine - targetDuty);
 
@@ -1117,6 +1124,7 @@ void find_PW_limit(PWLimitDir dir) {
           }
         }
       } else { // PW_LIMIT_HIGH
+        int consecutiveTimeouts = 0;
         for (uint16_t pwFine = bestCoarsePW; pwFine < DIV_COUNTER_PW; ++pwFine) {
           if (pwFine > maxPW) break;
           pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
@@ -1128,11 +1136,15 @@ void find_PW_limit(PWLimitDir dir) {
 
           GapMeasurement gmFine = measure_gap(2);
           if (gmFine.timedOut || periodUs <= 0.0) {
+            if (++consecutiveTimeouts >= 4) {
+              break;
+            }
             continue;
           }
+          consecutiveTimeouts = 0;
 
           double gapFine = (double)gmFine.value;
-          double dutyErrorFracFine = -gapFine / (2.0 * periodUs);
+          double dutyErrorFracFine = gapFine / (2.0 * periodUs);
           double dutyFine = 0.5 + dutyErrorFracFine;
           double deltaFine = fabs(dutyFine - targetDuty);
 
@@ -1342,6 +1354,27 @@ float find_gap(byte specialMode) {
     samplesNumber = 10;
   }
 
+  // Estimate ideal period for the current note so we can reject obviously
+  // invalid edge intervals (e.g. very short glitches) that do not match the
+  // DCO's actual frequency.
+  double freqHz = (double)sNotePitches[DCO_calibration_current_note - 12];
+  double idealPeriodUs = (freqHz > 0.0) ? (1000000.0 / freqHz) : 0.0;
+  double dtMinUs = 0.0;
+  double dtMaxUs = 0.0;
+  if (idealPeriodUs > 0.0) {
+    // Accept any segment between ~1% and ~99% of the ideal period. This covers
+    // extreme duty cycles (2%/98%) while rejecting very short/high-frequency
+    // glitches that are clearly not the fundamental.
+    dtMinUs = idealPeriodUs * 0.01;
+    dtMaxUs = idealPeriodUs * 0.99;
+    if (dtMinUs < (double)kEdgeDebounceMinUs) {
+      dtMinUs = (double)kEdgeDebounceMinUs;
+    }
+    if (dtMaxUs > (double)kGapTimeoutUs) {
+      dtMaxUs = (double)kGapTimeoutUs;
+    }
+  }
+
   // Reset edge-timing accumulators and counters at the start of each
   // measurement to avoid leaking partial sums from previous calls.
   pulseCounter         = 0;
@@ -1390,14 +1423,27 @@ float find_gap(byte specialMode) {
           pulseCounter == 0;
         }
         if (pulseCounter > 2) {
+          uint32_t dt = microsNow - edgeDetectionLastTime;
+          bool intervalOk = true;
+          if (idealPeriodUs > 0.0) {
+            // Reject intervals that are incompatible with the ideal period.
+            // This prevents very short spurious edges from corrupting the
+            // duty measurement at low frequencies.
+            if ((double)dt < dtMinUs || (double)dt > dtMaxUs) {
+              intervalOk = false;
+            }
+          }
+
+          if (intervalOk) {
           if (val == 0) {
-            fallingEdgeTimeSum += microsNow - edgeDetectionLastTime;
-            fallingCount++;
+              fallingEdgeTimeSum += dt;
+              fallingCount++;
           } else {
-            risingEdgeTimeSum += microsNow - edgeDetectionLastTime;
-            risingCount++;
+              risingEdgeTimeSum += dt;
+              risingCount++;
           }
           samplesCounter++;
+          }
         }
         edgeDetectionLastTime = microsNow;
         pulseCounter++;
