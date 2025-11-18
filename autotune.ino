@@ -265,6 +265,14 @@ void find_PW_center(uint8_t mode) {
 
   while (bestGap > targetGap) {
 
+    // Global timeout guard: avoid getting stuck if we cannot reach the target
+    // gap or measurements are unreliable. If 30 seconds have elapsed since
+    // the start of this PW-centre search, break out of the loop.
+    if (millis() - DCOCalibrationStart > 30000) {
+      Serial.println("PW center search timeout (30s)");
+      break;
+    }
+
     pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PWCalibrationVal);
 
     delay(30);
@@ -330,7 +338,7 @@ void find_PW_center(uint8_t mode) {
       } else {
         PWCalibrationVal++;
       }
-    } else if (DCO_calibration_difference < 0.00) {
+    } else if (difference < 0.00) {
       if (PIDgap >= 4000) {
         PWCalibrationVal -= 5;
       } else if (PIDgap > 2000) {
