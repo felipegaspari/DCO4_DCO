@@ -218,7 +218,10 @@ void restart_DCO_calibration() {
 // It searches for the PW value that yields a duty cycle closest to
 // targetDutyFraction at the current calibration note. targetGap is the
 // allowed absolute gap (in microseconds) from the ideal duty at that note.
-static uint16_t find_PW_for_target_duty(double targetDutyFraction, uint16_t targetGap) {
+static uint16_t find_PW_for_target_duty(double targetDutyFraction,
+                                        uint16_t targetGap,
+                                        uint16_t pwMin,
+                                        uint16_t pwMax) {
 
   DCO_calibration_difference = 4000;
   lastDCODifference = 50000;
@@ -244,9 +247,7 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction, uint16_t targ
   }
 
   // ---- Phase 1: Coarse scan over PW range to find a sign-change bracket ----
-  uint16_t pwMin = 0;
-  uint16_t pwMax = DIV_COUNTER_PW;
-  uint16_t coarseStep = DIV_COUNTER_PW / 16;
+  uint16_t coarseStep = (pwMax > pwMin) ? ((pwMax - pwMin) / 16) : 1;
   if (coarseStep == 0) coarseStep = 1;
 
   bool havePrev = false;
@@ -425,7 +426,12 @@ void find_PW_center(uint8_t mode) {
 
   voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
 
-  uint16_t centerPW = find_PW_for_target_duty(kPWCenterDutyFraction, targetGap);
+  uint16_t centerPW = find_PW_for_target_duty(
+    kPWCenterDutyFraction,
+    targetGap,
+    0,
+    DIV_COUNTER_PW
+  );
   Serial.println("PW center found !!!");
   update_FS_PWCenter(currentDCO / 2, centerPW);
   PW_CENTER[currentDCO / 2] = centerPW;
@@ -463,7 +469,12 @@ void find_PW_low_limit() {
 
   delay(100);
 
-  uint16_t lowPW = find_PW_for_target_duty(kPWLowDutyFraction, targetGap);
+  uint16_t lowPW = find_PW_for_target_duty(
+    kPWLowDutyFraction,
+    targetGap,
+    0,
+    PW_CENTER[currentDCO / 2]
+  );
   Serial.println("PW low limit found !!!");
   update_FS_PW_Low_Limit(currentDCO / 2, lowPW);
   PW_LOW_LIMIT[currentDCO / 2] = lowPW;
@@ -497,7 +508,12 @@ void find_PW_high_limit() {
 
   delay(100);
 
-  uint16_t highPW = find_PW_for_target_duty(kPWHighDutyFraction, targetGap);
+  uint16_t highPW = find_PW_for_target_duty(
+    kPWHighDutyFraction,
+    targetGap,
+    PW_CENTER[currentDCO / 2],
+    DIV_COUNTER_PW
+  );
   Serial.println("PW high limit found !!!");
   update_FS_PW_High_Limit(currentDCO / 2, highPW);
   PW_HIGH_LIMIT[currentDCO / 2] = highPW;
