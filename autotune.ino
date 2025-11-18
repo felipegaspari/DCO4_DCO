@@ -1,13 +1,14 @@
 
 #include "include_all.h"
 
-// For debug logging in gap measurement: track the last PW raw value we
-// explicitly programmed for the current DCO, and the duty target/period
-// assumed by the current PW search routine. This avoids relying on PW[]
-// being untouched by other parts of the system.
+// For debug logging and duty computation in gap measurement: track the last
+// PW raw value we explicitly programmed for the current DCO, the duty
+// target/period assumed by the current PW search routine, and the most
+// recently measured period from find_gap().
 static uint16_t g_lastPWMeasurementRaw = 0;
 static double   g_gapLogCurrentPeriodUs = 0.0;
 static double   g_gapLogTargetDutyFraction = 0.5;  // default 50%
+static double   g_lastGapMeasuredPeriodUs = 0.0;
 
 // Helper: turn off all oscillators and set their range PWMs to 0.
 static void disable_all_oscillators_and_range_pwm() {
@@ -350,7 +351,7 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction,
     double absGapDiff = abs(gapDiff);
 
     if (autotuneDebug >= 2 && periodUs > 0.0) {
-      double dutyErrorFrac = -gap / (2.0 * periodUs);
+      double dutyErrorFrac = gap / (2.0 * periodUs);
       double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
       Serial.println((String)"[PW_CENTER_COARSE] note=" + DCO_calibration_current_note +
                      (String)" DCO=" + currentDCO +
@@ -928,10 +929,10 @@ void find_PW_limit(PWLimitDir dir) {
     delay(30);
 
     GapMeasurement gm = measure_gap(2);
-    if (!gm.timedOut && periodUs > 0.0) {
+    if (!gm.timedOut) {
       totalValidCount++;
       double gap = (double)gm.value;
-      double dutyErrorFrac = -gap / (2.0 * periodUs);
+      double dutyErrorFrac = gap / (2.0 * periodUs);
       double duty = 0.5 + dutyErrorFrac;
 
       if (autotuneDebug >= 2) {
@@ -1205,10 +1206,10 @@ void find_PW_limit(PWLimitDir dir) {
         delay(30);
 
         GapMeasurement gmFine = measure_gap(2);
-        if (!gmFine.timedOut && periodUs > 0.0) {
+        if (!gmFine.timedOut) {
           totalValidCount++;
           double gap = (double)gmFine.value;
-          double dutyErrorFrac = -gap / (2.0 * periodUs);
+          double dutyErrorFrac = gap / (2.0 * periodUs);
           double duty = 0.5 + dutyErrorFrac;
 
           if (autotuneDebug >= 2) {
@@ -1297,7 +1298,7 @@ void find_PW_limit(PWLimitDir dir) {
       GapMeasurement gmFinal = measure_gap(2);
       if (!gmFinal.timedOut) {
         double gap = (double)gmFinal.value;
-        double dutyErrorFrac = -gap / (2.0 * periodUs);
+        double dutyErrorFrac = gap / (2.0 * periodUs);
         finalDutyPercent = (0.5 + dutyErrorFrac) * 100.0;
       }
     }
@@ -1368,9 +1369,10 @@ float find_gap(byte specialMode) {
       edgeDetectionLastVal = 0;
 
       if (autotuneDebug >= 3) {
+        uint16_t pwRaw = g_lastPWMeasurementRaw;
         Serial.println((String)"[GAP_TIMEOUT] note=" + DCO_calibration_current_note +
                        (String)" DCO=" + currentDCO +
-                       (String)" PW_raw=" + PW[currentDCO / 2] +
+                       (String)" PW_raw=" + pwRaw +
                        (String)" ampComp=" + ampCompCalibrationVal);
       }
 
@@ -1412,6 +1414,11 @@ float find_gap(byte specialMode) {
     float avgLowUs  = (fallingCount  > 0) ? (float)fallingEdgeTimeSum  / (float)fallingCount  : 0.0f;
     float avgHighUs = (risingCount   > 0) ? (float)risingEdgeTimeSum   / (float)risingCount   : 0.0f;
 
+    // Derived period and direct duty estimate based purely on measured low/high
+    // portions. This is for debugging/validation of the measurement method.
+    float measuredPeriodUs = avgLowUs + avgHighUs;
+    float dutyMeasuredFrac = (measuredPeriodUs > 0.0f) ? (avgLowUs / measuredPeriodUs) : 0.0f;
+
     // Positive DCO_calibration_difference means low segment longer than high
     // (duty < 50%), negative means high segment longer (duty > 50%).
     DCO_calibration_difference = avgLowUs - avgHighUs;
@@ -1421,19 +1428,30 @@ float find_gap(byte specialMode) {
       // current amplitude compensation value, the last PW we explicitly set,
       // and the inferred duty/target duty if a period is available.
       uint16_t pwRaw = g_lastPWMeasurementRaw;
-      double dutyPercent = 0.0;
+
+      // Duty estimate using the same "diff vs ideal period" method used by
+      // the PW search code.
+      double dutyPercentIdeal = 0.0;
       double targetDutyPercent = g_gapLogTargetDutyFraction * 100.0;
       if (g_gapLogCurrentPeriodUs > 0.0) {
-        double dutyErrorFrac = -(double)DCO_calibration_difference / (2.0 * g_gapLogCurrentPeriodUs);
-        dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+        double dutyErrorFrac = (double)DCO_calibration_difference / (2.0 * g_gapLogCurrentPeriodUs);
+        dutyPercentIdeal = (0.5 + dutyErrorFrac) * 100.0;
       }
+
+      // Direct duty estimate based only on measured low/high times.
+      double dutyPercentMeasured = dutyMeasuredFrac * 100.0;
+
       Serial.println((String)"[GAP_MEASURE] mode=" + specialMode +
                      (String)" note=" + DCO_calibration_current_note +
                      (String)" DCO=" + currentDCO +
                      (String)" AMP=" + ampCompCalibrationVal +
                      (String)" PW_raw=" + pwRaw +
                      (String)" diff=" + DCO_calibration_difference +
-                     (String)" duty≈" + dutyPercent + "%" +
+                     (String)" avgLowUs=" + avgLowUs +
+                     (String)" avgHighUs=" + avgHighUs +
+                     (String)" T_meas=" + measuredPeriodUs +
+                     (String)" duty_meas≈" + dutyPercentMeasured + "%" +
+                     (String)" duty_ideal≈" + dutyPercentIdeal + "%" +
                      (String)" targetDuty=" + targetDutyPercent + "%");
     }
 
