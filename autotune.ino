@@ -330,9 +330,13 @@ static uint16_t find_PW_for_target_duty(double targetDutyFraction, uint16_t targ
 
       GapMeasurement gm = measure_gap(2);
       if (gm.timedOut) {
-        // If we can't get a valid reading here, stop refining and keep best so far.
-        Serial.println("PW center: timeout during bisection, keeping best candidate.");
-        break;
+        // No valid data at this midpoint; skip this iteration and try again
+        // on the next loop. Global time/iteration guards will still ensure
+        // we eventually stop if there is no usable region.
+        if (autotuneDebug >= 2) {
+          Serial.println("PW center: timeout during bisection, skipping midpoint.");
+        }
+        continue;
       }
 
       double gapMid = (double)gm.value;
