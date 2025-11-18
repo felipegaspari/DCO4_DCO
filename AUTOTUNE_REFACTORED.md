@@ -228,13 +228,13 @@ Contains the **search‑based DCO calibration algorithm** (`calibrate_DCO`) and 
   - `static double compute_gap_tolerance_for_freq(double freqHz, double dutyErrorFraction);`
     - Computes the allowed absolute gap (in microseconds) for a given frequency and desired duty-cycle error fraction \(\varepsilon\).
     - Uses the relation \(|p - 0.5| = |\text{gap}| / (2T)\) with \(T = 10^6/f\), giving \(|\text{gap}|_\text{max} = 2\varepsilon T\).
-    - `calibrate_DCO` currently calls this with a compile-time fraction (e.g. 0.5% duty error) but it’s parameterized so different tolerances could be used later.
+    - `calibrate_DCO` now receives `dutyErrorFraction` as a parameter, so different tolerances (e.g. 0.5%, 1%) can be selected by the caller.
 
   - `static void store_note_result(DCOCalibrationContext& ctx, int j, uint16_t bestAmpComp, float closestToZero);`
     - Writes the final `[freq, pwm]` pair for the current note into `ctx.calibrationData`.
     - Prints a short human‑readable summary over `Serial`.
 
-- **`calibrate_DCO(DCOCalibrationContext& ctx)`**:
+- **`calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction)`**:
 
   Core responsibilities are unchanged; refactor only clarifies structure:
 
@@ -253,7 +253,7 @@ Contains the **search‑based DCO calibration algorithm** (`calibrate_DCO`) and 
   2. **Bounds & tolerance**:
      - `minAmpComp = currentAmpCompCalibrationVal * 0.8;`
      - `maxAmpComp = currentAmpCompCalibrationVal * 1.3;`
-     - `tolerance = 1e6 / f² / 4`, where `f = sNotePitches[VOICE_NOTES[0] - 12]`.
+     - `tolerance = compute_gap_tolerance_for_freq(f, dutyErrorFraction)`, where `f = sNotePitches[VOICE_NOTES[0] - 12]` and `dutyErrorFraction` expresses the allowed duty-cycle error (e.g. 0.005 = 0.5%).
 
   3. **Search loop** (per note):
      - Initializes:
