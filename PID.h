@@ -2,6 +2,9 @@
 #define __PID_H__
 
 #include <PID_v1.h>
+#include "autotune_context.h"
+#include "autotune_measurement.h"
+#include "autotune_constants.h"
 
 // PID controller variables used by legacy calibration routines:
 //  - PIDSetpoint: desired error (usually 0).
@@ -48,5 +51,9 @@ byte arrayPos;
 
 // Specify the links and initial tuning parameters for the PID controller.
 PID myPID(&PIDInput, &PIDOutput, &PIDSetpoint, consKp, consKi, consKd, P_ON_E, REVERSE);
+
+// Main DCO calibration routine (search-based) implemented in PID.ino.
+// dutyErrorFraction specifies the allowed duty-cycle error (e.g. 0.005 = 0.5%).
+void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction);
 
 #endif

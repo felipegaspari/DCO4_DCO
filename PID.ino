@@ -1,7 +1,4 @@
 #include "include_all.h"
-#include "autotune_constants.h"
-#include "autotune_measurement.h"
-#include "autotune_context.h"
 
 // Compute allowed |gap| (in microseconds) for a given frequency (Hz) and
 // duty-cycle error fraction (e.g. 0.005 = 0.5% duty error).
