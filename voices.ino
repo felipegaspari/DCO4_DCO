@@ -1233,12 +1233,6 @@ inline void voice_task_float() {
       pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
   
       if (note_on_flag_flag[i]) {
-        if (i == 0) {
-          Serial.println((String) "freq: " + (int)freqA_Hz);
-          Serial.println((String) "chanLevel: " + (int)chanLevel);
-          Serial.println("--------------------------------");
-          Serial.println("--------------------------------");
-        }
         // Sync logic mirrored from fixed-point voice_task, using float-derived clk_div and phase.
         if (oscSync == 1) {
           pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE

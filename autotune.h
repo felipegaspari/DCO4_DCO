@@ -93,7 +93,12 @@ uint16_t PWCalibrationVal;
 // Global debug verbosity level for autotune routines.
 byte autotuneDebug = 4;
 
-
+// Direction selector for unified PW limit search.
+enum PWLimitDir {
+    PW_LIMIT_LOW,
+    PW_LIMIT_HIGH
+  };
+  
 
 /*********************** VCO calibration  ********************/
 /**********************                    *******************/

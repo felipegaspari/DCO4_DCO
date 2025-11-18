@@ -50,7 +50,7 @@ inline void update_parameters(byte paramNumber, int16_t paramValue) {
         }
       } else {
         if (oscSync > 8) {
-          phaseAlignOSC2 = oscSync * 2;
+          phaseAlignOSC2 = oscSync;
         } else {
           switch (oscSync) {
             case 2:

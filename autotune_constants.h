@@ -14,7 +14,7 @@ constexpr unsigned long kGapTimeoutUs = 100000UL;
 
 // Minimum time (in microseconds) between detected edges to treat
 // them as valid (simple debounce).
-constexpr unsigned long kEdgeDebounceMinUs = 30UL;
+constexpr unsigned long kEdgeDebounceMinUs = 20UL;
 
 // Target duty fractions for PW calibration:
 //  - Center:  50% duty
