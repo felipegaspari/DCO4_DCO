@@ -538,10 +538,12 @@ void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
       if (autotuneDebug >= 2 && periodUs > 0.0) {
         double dutyErrorFrac = -(double)avgValue / (2.0 * periodUs);
         double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
-        Serial.println((String)"DCO calib: AMP=" + currentAmpCompCalibrationVal +
+        Serial.println((String)"[DCO_AMP_SCAN] note=" + ctx.currentNote +
+                       (String)" DCO=" + ctx.dcoIndex +
+                       (String)" AMP=" + currentAmpCompCalibrationVal +
                        (String)" gap=" + avgValue +
                        (String)"us duty=" + dutyPercent +
-                       (String)"% tolDuty≈" + toleranceDutyPercent + "%");
+                       (String)"% target=50% tol≈" + toleranceDutyPercent + "%");
       }
 
       // Update best candidate only if the measurement is valid (not a timeout)

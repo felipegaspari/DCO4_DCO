@@ -18,11 +18,16 @@ constexpr unsigned long kEdgeDebounceMinUs = 30UL;
 
 // Target duty fractions for PW calibration:
 //  - Center:  50% duty
-//  - Low:     10% duty (user-adjustable if desired)
-//  - High:    90% duty (user-adjustable if desired)
+//  - Low:      2% duty (user-adjustable if desired)
+//  - High:    98% duty (user-adjustable if desired)
 constexpr double kPWCenterDutyFraction = 0.5;
 constexpr double kPWLowDutyFraction    = 0.02;
 constexpr double kPWHighDutyFraction   = 0.98;
+
+// Duty tolerance used when validating PW low/high limits and PW center lock-in.
+// A sample whose duty is within ±kPWLimitDutyTolerance of the target
+// low/center/high duty is considered "in tolerance".
+constexpr double kPWLimitDutyTolerance = 0.01;  // ±5%
 
 #endif  // __AUTOTUNE_CONSTANTS_H__
 

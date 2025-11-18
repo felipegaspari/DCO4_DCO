@@ -39,7 +39,7 @@ static void dco_handle_pw_update(char, const uint8_t* payload, uint8_t len) {
   }
   // 2-byte value, little-endian, applied to PW[0].
   uint16_t pwRaw = (uint16_t)payload[0] | (uint16_t(payload[1]) << 8);
-  PW[0] = DIV_COUNTER_PW - (pwRaw / 4);
+  PW[0] = pwRaw / 4;
 }
 
 // DCO-specific handler: ADSR BLOCK ('s')

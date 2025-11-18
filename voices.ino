@@ -1286,7 +1286,7 @@ inline void voice_task_float() {
           if (pw_calc < 0.0f) pw_calc = 0.0f;
           if (pw_calc > (float)(DIV_COUNTER_PW - 1)) pw_calc = (float)(DIV_COUNTER_PW - 1);
   
-          PW_PWM[i] = (uint16_t)lrintf(pw_calc);
+          PW_PWM[i] = (uint16_t)pw_calc;
   #ifdef RUNNING_AVERAGE
           ra_pwm_calculations.addValue((float)(micros() - t_pwm));
   #endif
@@ -1658,13 +1658,21 @@ inline uint16_t get_chan_level_float(float freqHz, uint8_t voiceN) {
   if (freqHz <= ampCompFrequencyHz[voiceN][0]) {
     return ampCompArray[voiceN][0];
   }
-  if (freqHz >= ampCompFrequencyHz[voiceN][ampCompTableSize - 1]) {
-    return ampCompArray[voiceN][ampCompTableSize - 1];
+
+  // The precompute code initialises the final breakpoint at index ampCompTableSize
+  // (see precomputeCoefficients_float in amp_comp.h), using it as the true
+  // "max frequency" sentinel. Mirror the fixed-point path and clamp against
+  // that sentinel so the top plateau is handled consistently.
+  if (freqHz >= ampCompFrequencyHz[voiceN][ampCompTableSize]) {
+    return ampCompArray[voiceN][ampCompTableSize];
   }
 
   // Linear scan over small table,
   // with an added plateau clamp.
-  for (int i = 0; i < ampCompTableSize - 2; ++i) {
+  // We have (ampCompTableSize - 1) quadratic windows, each using
+  // points (i, i+1, i+2); the last window (index ampCompTableSize-2)
+  // uses the sentinel at ampCompTableSize as its right endpoint.
+  for (int i = 0; i < ampCompTableSize - 1; ++i) {
     if (ampCompFrequencyHz[voiceN][i] <= freqHz &&
         freqHz < ampCompFrequencyHz[voiceN][i + 2]) {
 
@@ -1692,20 +1700,30 @@ inline uint16_t get_PW_level_interpolated(uint16_t PWval, uint8_t voiceN) {
 
   uint16_t chanLevel;
 
-  if (PWval >= DIV_COUNTER) {
-    chanLevel = PW_HIGH_LIMIT[voiceN];
-    return chanLevel;
-  } else if (PWval <= 0) {
-    chanLevel = PW_LOW_LIMIT[voiceN];
-    return chanLevel;
-  } else {
+  // Horizontal PW axis: 0 .. DIV_COUNTER_PW-1 (pot/LFO/ADSR domain)
+  // Vertical axis (output): mapped to calibrated low/center/high PWM limits.
 
-    if (PWval >= PW_LOOKUP[1]) {
-      chanLevel = map(PWval, PW_LOOKUP[1], PW_LOOKUP[2], PW_CENTER[voiceN], PW_HIGH_LIMIT[voiceN]);
-      return chanLevel;
+  if (PWval >= (DIV_COUNTER_PW - 1)) {
+    // Above max PW, clamp to calibrated high limit.
+    return PW_HIGH_LIMIT[voiceN];
+  } else if (PWval <= 0) {
+    // Below min PW, clamp to calibrated low limit.
+    return PW_LOW_LIMIT[voiceN];
+  } else {
+    uint16_t pwLowBreak  = PW_LOOKUP[0];  // usually 0
+    uint16_t pwMidBreak  = PW_LOOKUP[1];  // mid-point
+    uint16_t pwHighBreak = PW_LOOKUP[2];  // usually DIV_COUNTER_PW-1
+
+    if (PWval >= pwMidBreak) {
+      // Upper half: interpolate from center to high limit.
+      chanLevel = map(PWval,
+                      pwMidBreak, pwHighBreak,
+                      PW_CENTER[voiceN], PW_HIGH_LIMIT[voiceN]);
     } else {
-      chanLevel = map(PWval, PW_LOOKUP[0], PW_LOOKUP[1], PW_LOW_LIMIT[voiceN], PW_CENTER[voiceN]);
-      return chanLevel;
+      // Lower half: interpolate from low limit to center.
+      chanLevel = map(PWval,
+                      pwLowBreak, pwMidBreak,
+                      PW_LOW_LIMIT[voiceN], PW_CENTER[voiceN]);
     }
 
     return chanLevel;
@@ -1729,6 +1747,11 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
     freq = (float)sNotePitches[note1];
   }
 
+  uint32_t clk_div1 = (uint32_t)(((float)sysClock_Hz / freq) - pioPulseLength) / NUM_OSR_CHUNKS;
+
+  if (freq == 0)
+  clk_div1 = 0;
+
   if (manualCalibrationFlag == true) {  // One Ocillator at a time to get correct gap
 
     int8_t currentCalibrationOscillator = manualCalibrationStage / 2;
@@ -1740,16 +1763,12 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
       uint8_t sm1N = VOICE_TO_SM[i];
 
       if (i != currentCalibrationOscillator) {
-        uint32_t clk_div1 = 200;
+        uint32_t silence_clk_div1 = 200;
 
-        pio_sm_put(pioN, sm1N, clk_div1);
+        pio_sm_put(pioN, sm1N, silence_clk_div1);
         pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
         pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
       } else {
-        register uint32_t clk_div1 = (uint32_t)(((float)sysClock_Hz / freq) - pioPulseLength) / NUM_OSR_CHUNKS;
-
-        if (freq == 0)
-          clk_div1 = 0;
 
         pio_sm_put(pioN, sm1N, clk_div1);
 
@@ -1767,11 +1786,6 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
     uint8_t pioNumber = VOICE_TO_PIO[currentDCO];
     PIO pioN = pio[VOICE_TO_PIO[currentDCO]];
     uint8_t sm1N = VOICE_TO_SM[currentDCO];
-
-    uint32_t clk_div1 = (int)((float)(eightSysClock_Hz_u - eightPioPulseLength - (freq * 500)) / freq);
-
-    if (freq == 0)
-      clk_div1 = 0;
 
     pio_sm_put(pioN, sm1N, clk_div1);
     pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));

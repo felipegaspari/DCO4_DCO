@@ -84,6 +84,7 @@ static void precomputeCoefficients() {
   const double maxFreqHz    = (double)AMP_COMP_MAX_HZ;
 
   for (int j = 0; j < NUM_OSCILLATORS; j++) {
+    bool plateauSeen = false;  // ensure we only mark the *first* plateau window per oscillator
     for (int i = 0; i < ampCompTableSize - 1; ++i) {
       double x0_f = (double)ampCompFrequencyArray[j][i]     * invFreqScale;
       double x1_f = (double)ampCompFrequencyArray[j][i + 1] * invFreqScale;
@@ -108,8 +109,21 @@ static void precomputeCoefficients() {
         ampCompArray[j][i + 2] = (uint16_t)DIV_COUNTER;
       }
 
-      plateauWindow[j][i] = (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
-                              ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
+      // Mark exactly one plateau window per oscillator: the first window whose
+      // *sanitised* mid/right points are at or beyond full-scale. This avoids
+      // multiple plateau windows when the input table has several sentinel
+      // values at the top, which can otherwise cause inconsistent behaviour
+      // when approaching the plateau from different directions.
+      bool plateauCandidate =
+        (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
+         ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
+
+      if (!plateauSeen && plateauCandidate) {
+        plateauWindow[j][i] = true;
+        plateauSeen = true;
+      } else {
+        plateauWindow[j][i] = false;
+      }
 
       // --- 2. Calculate Float Coefficients (for the fallback) ---
       long double denom_ld = (long double)(x0_f - x1_f) * (long double)(x0_f - x2_f) * (long double)(x1_f - x2_f);
@@ -204,6 +218,7 @@ static void precomputeCoefficients_float() {
   const double maxFreqHz = (double)AMP_COMP_MAX_HZ;
 
   for (int j = 0; j < NUM_OSCILLATORS; ++j) {
+    bool plateauSeen = false;  // ensure we only mark the *first* plateau window per oscillator
     for (int i = 0; i < ampCompTableSize - 1; ++i) {
       // Work directly in Hz domain using the float frequency table.
       double x0_f = (double)ampCompFrequencyHz[j][i];
@@ -233,8 +248,19 @@ static void precomputeCoefficients_float() {
       }
 
       // Mark plateau windows for fast runtime clamping in both paths.
-      plateauWindow[j][i] = (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
-                             ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
+      // As in the fixed-point precompute, we only mark the *first* plateau
+      // window per oscillator to avoid multiple overlapping plateau windows
+      // when the input table has several sentinel values at the top.
+      bool plateauCandidate =
+        (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
+         ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
+
+      if (!plateauSeen && plateauCandidate) {
+        plateauWindow[j][i] = true;
+        plateauSeen = true;
+      } else {
+        plateauWindow[j][i] = false;
+      }
 
       // Compute float quadratic coefficients y = a*x^2 + b*x + c in Hz domain.
       long double denom_ld =
