@@ -1483,9 +1483,15 @@ float find_gap(byte specialMode) {
     - float((float)risingEdgeTimeSum / float((float)samplesNumber / 4.00f))); // this is the difference between 50% duty cyclce and the actual duty cycle, divided by 4 to allow more coarse calibration.
 
     if (autotuneDebug >= 2) {
+      // Log raw gap measurement with context: which mode, note/DCO, the
+      // current amplitude compensation value, and the current PW for this DCO.
+      uint8_t  voiceIdx = currentDCO / 2;
+      uint16_t pwRaw    = PW[voiceIdx];
       Serial.println((String)"[GAP_MEASURE] mode=" + specialMode +
                      (String)" note=" + DCO_calibration_current_note +
                      (String)" DCO=" + currentDCO +
+                     (String)" AMP=" + ampCompCalibrationVal +
+                     (String)" PW_raw=" + pwRaw +
                      (String)" diff=" + DCO_calibration_difference);
     }
 

@@ -1233,6 +1233,12 @@ inline void voice_task_float() {
       pio_sm_exec(pioN_B, sm2N, pio_encode_pull(false, false));
   
       if (note_on_flag_flag[i]) {
+        if (i == 0) {
+          Serial.println((String) "freq: " + (int)freqA_Hz);
+          Serial.println((String) "chanLevel: " + (int)chanLevel);
+          Serial.println("--------------------------------");
+          Serial.println("--------------------------------");
+        }
         // Sync logic mirrored from fixed-point voice_task, using float-derived clk_div and phase.
         if (oscSync == 1) {
           pio_sm_exec(pioN_A, sm1N, pio_encode_jmp(10 + offset[pioNumberA]));  // OSC Sync MODE
@@ -1567,51 +1573,60 @@ void setSyncMode() {
 /**
  * @brief Fast amplitude compensation lookup tuned for the RP2040.
  *
- * This function is optimized for the simple, in-order pipeline of the ARM Cortex-M0+ core.
- * It replaces complex, unpredictable branching with a simple, predictable linear scan
- * to find the correct interpolation window. For small tables, this approach is often
- * faster as it avoids processor pipeline stalls. The core calculation uses the proven,
- * numerically stable fixed-point quadratic method.
+ * Uses a deterministic window selection rule that matches the float path:
+ * for each oscillator we choose the *first* window i such that
+ *   freqRow[i] <= x < freqRow[i+2]
+ * scanning from low to high. This guarantees that a given x always maps to the
+ * same window regardless of whether we are gliding up or down in frequency
+ * (no hysteresis), while keeping the table small enough that a linear scan
+ * remains very cheap on the M0+.
+ *
+ * The core calculation uses the proven, numerically stable fixed-point
+ * quadratic method with precomputed Q-format coefficients.
  */
 uint16_t get_chan_level_lookup_fast(int32_t x, uint8_t voiceN) {
-  static uint8_t lastWindow[NUM_OSCILLATORS] = { 0 };
-
   // --- 1. Load pointers to this oscillator's table rows (cache friendly) ---
-  const int32_t* freqRow = ampCompFrequencyArray[voiceN];
-  const int32_t* ampRow = ampCompArray[voiceN];
-  const int32_t* xBaseRow = xBaseWIN[voiceN];
-  const int32_t* spanRow = dxWIN[voiceN];
+  const int32_t* freqRow   = ampCompFrequencyArray[voiceN];
+  const int32_t* ampRow    = ampCompArray[voiceN];
+  const int32_t* xBaseRow  = xBaseWIN[voiceN];
+  const int32_t* spanRow   = dxWIN[voiceN];
   const uint32_t* invRow_q28 = invDxWIN_q28[voiceN];
-  const int32_t* aRow = aQWIN_fast[voiceN];
-  const int32_t* bRow = bQWIN_fast[voiceN];
-  const uint16_t* cRow = cQWIN[voiceN];
-  const bool* plateauRow = plateauWindow[voiceN];
+  const int32_t* aRow      = aQWIN_fast[voiceN];
+  const int32_t* bRow      = bQWIN_fast[voiceN];
+  const uint16_t* cRow     = cQWIN[voiceN];
 
   // --- 2. Handle boundary conditions ---
   if (x <= freqRow[0]) return (uint16_t)ampRow[0];
   const int lastIdx = ampCompTableSize;
-  if (x >= freqRow[lastIdx]) return (uint16_t)ampRow[lastIdx];
 
-  // --- 3. Find the correct window using a cached search ---
-  int window = lastWindow[voiceN];
+  // --- 2a. Global plateau clamp using precomputed plateau start ---
+  // If the calibrated table provides a real breakpoint with freq < AMP_COMP_MAX_HZ
+  // and amp == DIV_COUNTER, clamp everything at/above that frequency directly
+  // to DIV_COUNTER. This avoids evaluating the quadratic in the plateau region
+  // and ignores any synthetic high-frequency filler points.
+  if (plateauStartIndex[voiceN] >= 0) {
+    int32_t plateauFreqQ = plateauStartFreqQ[voiceN];
+    if (x >= plateauFreqQ) {
+      return (uint16_t)DIV_COUNTER;
+    }
+  }
+
+  // --- 3. Find the correct window with a deterministic linear scan ---
+  // We deliberately scan in ascending order and pick the *first* window that
+  // covers x in the [freqRow[i], freqRow[i+2]) sense. This matches the float
+  // implementation and avoids path-dependent window choices when the windows
+  // overlap, which is what previously caused different results when
+  // approaching the plateau from above vs below.
   const int maxWindow = ampCompTableSize - 2;
-  if (window > maxWindow) window = maxWindow;
-
-  // These small loops are very fast for gliding frequencies (common case).
-  while (window > 0 && x < freqRow[window]) {
-    --window;
-  }
-  while (window < maxWindow && x > freqRow[window + 2]) {
-    ++window;
-  }
-  lastWindow[voiceN] = (uint8_t)window;
-
-  // --- 4. Check for and handle plateaus ---
-  if (plateauRow[window] && x >= freqRow[window + 1]) {
-    return (uint16_t)DIV_COUNTER;
+  int window = 0;
+  for (int i = 0; i <= maxWindow; ++i) {
+    if (x >= freqRow[i] && x < freqRow[i + 2]) {
+      window = i;
+      break;
+    }
   }
 
-  // --- 5. Core quadratic calculation ---
+  // --- 4. Core quadratic calculation ---
   // This path is now fully branchless for maximum speed.
   int32_t dx = x - xBaseRow[window];
   const int32_t span = spanRow[window];
@@ -1659,40 +1674,38 @@ inline uint16_t get_chan_level_float(float freqHz, uint8_t voiceN) {
     return ampCompArray[voiceN][0];
   }
 
-  // The precompute code initialises the final breakpoint at index ampCompTableSize
-  // (see precomputeCoefficients_float in amp_comp.h), using it as the true
-  // "max frequency" sentinel. Mirror the fixed-point path and clamp against
-  // that sentinel so the top plateau is handled consistently.
-  if (freqHz >= ampCompFrequencyHz[voiceN][ampCompTableSize]) {
-    return ampCompArray[voiceN][ampCompTableSize];
-  }
-
-  // Linear scan over small table,
-  // with an added plateau clamp.
-  // We have (ampCompTableSize - 1) quadratic windows, each using
-  // points (i, i+1, i+2); the last window (index ampCompTableSize-2)
-  // uses the sentinel at ampCompTableSize as its right endpoint.
-  for (int i = 0; i < ampCompTableSize - 1; ++i) {
-    if (ampCompFrequencyHz[voiceN][i] <= freqHz &&
-        freqHz < ampCompFrequencyHz[voiceN][i + 2]) {
-
-      // Plateau handling: if this is a plateau window and we're past the mid point,
-      // drive full-scale level to match fixed-point behaviour.
-      if (plateauWindow[voiceN][i] &&
-          freqHz >= ampCompFrequencyHz[voiceN][i + 1]) {
-        return (uint16_t)DIV_COUNTER;
-      }
-
-      float a = aCoeff[voiceN][i];
-      float b = bCoeff[voiceN][i];
-      float c = cCoeff[voiceN][i];
-
-      float interpolatedValue = (a * freqHz + b) * freqHz + c;
-      return round(interpolatedValue);
+  // Global plateau clamp using precomputed plateau start (Hz domain).
+  // Once we reach the first real DIV_COUNTER point below AMP_COMP_MAX_HZ,
+  // treat the response as fully saturated.
+  if (plateauStartIndex[voiceN] >= 0) {
+    float plateauFreqHz = plateauStartFreqHz[voiceN];
+    if (freqHz >= plateauFreqHz) {
+      return (uint16_t)DIV_COUNTER;
     }
   }
-  // Fallback (should not happen if tables are well-formed)
-  return 0;
+
+  // --- Window selection: deterministic linear scan, mirroring fixed-point path ---
+  // We have (ampCompTableSize - 1) quadratic windows, each using points
+  // (i, i+1, i+2); the last window (index ampCompTableSize-2) uses the sentinel
+  // at ampCompTableSize as its right endpoint. We scan from low to high and
+  // pick the *first* window whose [x0, x2) interval contains freqHz, ensuring
+  // hysteresis-free behaviour when approaching the plateau from either side.
+  const int maxWindow = ampCompTableSize - 2;
+  int window = 0;
+  for (int i = 0; i <= maxWindow; ++i) {
+    if (freqHz >= ampCompFrequencyHz[voiceN][i] &&
+        freqHz <  ampCompFrequencyHz[voiceN][i + 2]) {
+      window = i;
+      break;
+    }
+  }
+
+  float a = aCoeff[voiceN][window];
+  float b = bCoeff[voiceN][window];
+  float c = cCoeff[voiceN][window];
+
+  float interpolatedValue = (a * freqHz + b) * freqHz + c;
+  return round(interpolatedValue);
 }
 #endif  // USE_FLOAT_AMP_COMP
 

@@ -11,7 +11,13 @@ static constexpr int32_t AMP_COMP_MAX_HZ  = 7000;
 
 int32_t freq_to_amp_comp_array[352];
 
-bool    plateauWindow[NUM_OSCILLATORS][ampCompTableSize - 1];
+// Per-oscillator plateau metadata:
+//  - plateauStartIndex: first table index with freq < AMP_COMP_MAX_HZ and amp == DIV_COUNTER.
+//  - plateauStartFreqQ: corresponding frequency in fixed-point Q(FREQ_FRAC_BITS) (fixed engine).
+//  - plateauStartFreqHz: corresponding frequency in Hz (float engine).
+int16_t plateauStartIndex[NUM_OSCILLATORS];
+int32_t plateauStartFreqQ[NUM_OSCILLATORS];
+float   plateauStartFreqHz[NUM_OSCILLATORS];
 
 // ----- Fixed-point (Q8) amp-comp data, used only when !USE_FLOAT_AMP_COMP -----
 #ifndef USE_FLOAT_AMP_COMP
@@ -84,7 +90,13 @@ static void precomputeCoefficients() {
   const double maxFreqHz    = (double)AMP_COMP_MAX_HZ;
 
   for (int j = 0; j < NUM_OSCILLATORS; j++) {
-    bool plateauSeen = false;  // ensure we only mark the *first* plateau window per oscillator
+    bool plateauSeen = false;  // ensure we only capture plateau start once per oscillator
+
+    // Initialise plateau metadata for this oscillator. We'll fill these as
+    // soon as we detect the first real DIV_COUNTER point below AMP_COMP_MAX_HZ.
+    plateauStartIndex[j] = -1;
+    plateauStartFreqQ[j] = AMP_COMP_MAX_HZ_Q;
+
     for (int i = 0; i < ampCompTableSize - 1; ++i) {
       double x0_f = (double)ampCompFrequencyArray[j][i]     * invFreqScale;
       double x1_f = (double)ampCompFrequencyArray[j][i + 1] * invFreqScale;
@@ -93,10 +105,24 @@ static void precomputeCoefficients() {
       double y1_f = (double)ampCompArray[j][i + 1];
       double y2_f = (double)ampCompArray[j][i + 2];
 
-      if (ampCompFrequencyArray[j][i + 1] >= AMP_COMP_SENTINEL_FREQ_Q) x1_f = maxFreqHz;
-      if (ampCompFrequencyArray[j][i + 2] >= AMP_COMP_SENTINEL_FREQ_Q) x2_f = maxFreqHz;
+      // Any frequency above AMP_COMP_MAX_HZ is a synthetic filler/sentinel
+      // (e.g., 20 kHz) and must be treated as if it were exactly at the
+      // physical maximum. Clamp those to maxFreqHz so they don't distort
+      // the real plateau shape near the top of the usable range.
+      if (ampCompFrequencyArray[j][i + 1] >= AMP_COMP_MAX_HZ_Q) x1_f = maxFreqHz;
+      if (ampCompFrequencyArray[j][i + 2] >= AMP_COMP_MAX_HZ_Q) x2_f = maxFreqHz;
 
       if (y1_f >= DIV_COUNTER && y2_f >= DIV_COUNTER) {
+        // Capture the plateau start from the *raw* calibration point before
+        // we modify/smooth the table. We want the first real full-scale
+        // breakpoint strictly below the synthetic high-frequency fillers.
+        if (!plateauSeen &&
+            plateauStartIndex[j] < 0 &&
+            ampCompFrequencyArray[j][i + 1] < AMP_COMP_MAX_HZ_Q) {
+          plateauStartIndex[j] = i + 1;
+          plateauStartFreqQ[j] = ampCompFrequencyArray[j][i + 1];
+        }
+
         double plateau_end_y = (double)DIV_COUNTER;
         x1_f = (x0_f + maxFreqHz) * 0.5;
         y1_f = (y0_f + plateau_end_y) * 0.5;
@@ -107,22 +133,6 @@ static void precomputeCoefficients() {
         ampCompArray[j][i + 1] = (uint16_t)llround(y1_f);
         ampCompFrequencyArray[j][i + 2] = AMP_COMP_MAX_HZ_Q;
         ampCompArray[j][i + 2] = (uint16_t)DIV_COUNTER;
-      }
-
-      // Mark exactly one plateau window per oscillator: the first window whose
-      // *sanitised* mid/right points are at or beyond full-scale. This avoids
-      // multiple plateau windows when the input table has several sentinel
-      // values at the top, which can otherwise cause inconsistent behaviour
-      // when approaching the plateau from different directions.
-      bool plateauCandidate =
-        (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
-         ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
-
-      if (!plateauSeen && plateauCandidate) {
-        plateauWindow[j][i] = true;
-        plateauSeen = true;
-      } else {
-        plateauWindow[j][i] = false;
       }
 
       // --- 2. Calculate Float Coefficients (for the fallback) ---
@@ -218,7 +228,14 @@ static void precomputeCoefficients_float() {
   const double maxFreqHz = (double)AMP_COMP_MAX_HZ;
 
   for (int j = 0; j < NUM_OSCILLATORS; ++j) {
-    bool plateauSeen = false;  // ensure we only mark the *first* plateau window per oscillator
+    bool plateauSeen = false;  // ensure we only capture plateau start once per oscillator
+
+    // Initialise plateau metadata for this oscillator in the float/Hz domain.
+    // We'll fill these as soon as we detect the first real DIV_COUNTER point
+    // below AMP_COMP_MAX_HZ.
+    plateauStartIndex[j]  = -1;
+    plateauStartFreqHz[j] = (float)AMP_COMP_MAX_HZ;
+
     for (int i = 0; i < ampCompTableSize - 1; ++i) {
       // Work directly in Hz domain using the float frequency table.
       double x0_f = (double)ampCompFrequencyHz[j][i];
@@ -235,6 +252,17 @@ static void precomputeCoefficients_float() {
       // Plateau smoothing: if both subsequent points are at/beyond full scale,
       // synthesise a smooth transition into the plateau and update the tables.
       if (y1_f >= DIV_COUNTER && y2_f >= DIV_COUNTER) {
+        // Capture the plateau start from the *raw* calibration point before
+        // we modify/smooth the table. Use the first full-scale breakpoint
+        // strictly below the float-domain maximum.
+        if (!plateauSeen &&
+            plateauStartIndex[j] < 0 &&
+            ampCompFrequencyHz[j][i + 1] < (float)maxFreqHz) {
+          plateauStartIndex[j]  = i + 1;
+          plateauStartFreqHz[j] = ampCompFrequencyHz[j][i + 1];
+          plateauSeen = true;
+        }
+
         double plateau_end_y = (double)DIV_COUNTER;
         x1_f = (x0_f + maxFreqHz) * 0.5;
         y1_f = (y0_f + plateau_end_y) * 0.5;
@@ -245,21 +273,6 @@ static void precomputeCoefficients_float() {
         ampCompArray[j][i + 1]       = (uint16_t)llround(y1_f);
         ampCompFrequencyHz[j][i + 2] = (float)maxFreqHz;
         ampCompArray[j][i + 2]       = (uint16_t)DIV_COUNTER;
-      }
-
-      // Mark plateau windows for fast runtime clamping in both paths.
-      // As in the fixed-point precompute, we only mark the *first* plateau
-      // window per oscillator to avoid multiple overlapping plateau windows
-      // when the input table has several sentinel values at the top.
-      bool plateauCandidate =
-        (ampCompArray[j][i + 1] >= (int32_t)DIV_COUNTER &&
-         ampCompArray[j][i + 2] >= (int32_t)DIV_COUNTER);
-
-      if (!plateauSeen && plateauCandidate) {
-        plateauWindow[j][i] = true;
-        plateauSeen = true;
-      } else {
-        plateauWindow[j][i] = false;
       }
 
       // Compute float quadratic coefficients y = a*x^2 + b*x + c in Hz domain.
@@ -286,7 +299,8 @@ static void precomputeCoefficients_float() {
       ampCompFrequencyHz[j][i] = (float)x0_f;
     }
 
-    // The final breakpoint (ampCompTableSize) in Hz has already been initialised to AMP_COMP_MAX_HZ.
+    // The final breakpoint (ampCompTableSize) in Hz has already been
+    // initialised to AMP_COMP_MAX_HZ.
   }
 }
 #endif  // USE_FLOAT_AMP_COMP

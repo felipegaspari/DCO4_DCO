@@ -21,7 +21,7 @@
 // High-level engine selection:
 // - For RP2040 (no FPU): comment this out to use the fixed-point engine.
 // - For RP2350 (with FPU): leave defined to use the float-based engine.
-// #define USE_FLOAT_ENGINE
+#define USE_FLOAT_ENGINE
 
 // Derived switches for the different subsystems:
 #ifdef USE_FLOAT_ENGINE
