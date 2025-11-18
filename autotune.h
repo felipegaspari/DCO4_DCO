@@ -2,6 +2,9 @@
 #define __AUTOTUNE_H__
 
 #include "include_all.h"
+#include "autotune_constants.h"
+#include "autotune_measurement.h"
+#include "autotune_context.h"
 
 // Global flags controlling calibration routines.
 //  - calibrationFlag: a calibration process is currently running.

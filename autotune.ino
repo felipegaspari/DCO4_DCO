@@ -1,8 +1,6 @@
 
 #include "include_all.h"
-#include "autotune_constants.h"
-#include "autotune_measurement.h"
-#include "autotune_context.h"
+
 
 // Helper: turn off all oscillators and set their range PWMs to 0.
 static void disable_all_oscillators_and_range_pwm() {
@@ -137,7 +135,7 @@ void DCO_calibration() {
       initManualAmpCompCalibrationVal
     );
     // Desired duty-cycle error tolerance as a fraction (e.g. 0.005 = 0.5%).
-    double dutyErrorFraction = 0.005;
+    double dutyErrorFraction = 0.002;
     calibrate_DCO(ctx, dutyErrorFraction);
 
     for (int i = 0; i < chanLevelVoiceDataSize; i++) {
@@ -211,6 +209,174 @@ void restart_DCO_calibration() {
 /*************************************************************************************/
 /*************************************************************************************/
 
+// Shared search routine used by PW calibration functions (center/low/high).
+// It searches for the PW value that yields a duty cycle closest to
+// targetDutyFraction at the current calibration note. targetGap is the
+// allowed absolute gap (in microseconds) from the ideal duty at that note.
+static uint16_t find_PW_for_target_duty(double targetDutyFraction, uint16_t targetGap) {
+
+  DCO_calibration_difference = 4000;
+  lastDCODifference = 50000;
+  lastGapFlipCount = 0;
+  lastPIDgap = 50000;
+  bestGap = 50000;
+  bestCandidate = 50000;
+  lastampCompCalibrationVal = 0;
+  edgeDetectionLastTime = 0;
+  PIDMinGapCounter = 0;
+  pulseCounter = 0;
+
+  // Precompute period and duty-cycle tolerance (in %) for debug reporting.
+  double freqHz = (double)sNotePitches[DCO_calibration_current_note - 12];
+  double periodUs = (freqHz > 0.0) ? (1000000.0 / freqHz) : 0.0;
+  double toleranceDutyPercent = 0.0;
+  double gapTarget = 0.0;
+  if (periodUs > 0.0) {
+    // Ideal gap for target duty: gap = T*(1 - 2p)
+    gapTarget = periodUs * (1.0 - 2.0 * targetDutyFraction);
+    double tolDutyFrac = (double)targetGap / (2.0 * periodUs);
+    toleranceDutyPercent = tolDutyFrac * 100.0;
+  }
+
+  // ---- Phase 1: Coarse scan over PW range to find a sign-change bracket ----
+  uint16_t pwMin = 0;
+  uint16_t pwMax = DIV_COUNTER_PW;
+  uint16_t coarseStep = DIV_COUNTER_PW / 16;
+  if (coarseStep == 0) coarseStep = 1;
+
+  bool havePrev = false;
+  double prevGap = 0.0;
+  uint16_t prevPW = 0;
+
+  bool haveBracket = false;
+  uint16_t pwLow = 0, pwHigh = 0;
+  double gapLow = 0.0, gapHigh = 0.0;
+
+  for (uint16_t pw = pwMin; pw <= pwMax; pw = (uint16_t)(pw + coarseStep)) {
+
+    if (millis() - DCOCalibrationStart > 60000) {
+      Serial.println("PW center coarse scan timeout (60s)");
+      break;
+    }
+
+    pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                       pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                       pw);
+    delay(30);
+
+    GapMeasurement gm = measure_gap(2);
+    if (gm.timedOut) {
+      continue;  // no usable signal at this PW
+    }
+
+    double gap = (double)gm.value;
+    double gapDiff = gap - gapTarget;
+    double absGapDiff = abs(gapDiff);
+
+    if (autotuneDebug >= 2 && periodUs > 0.0) {
+      double dutyErrorFrac = -gap / (2.0 * periodUs);
+      double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+      Serial.println((String)"PW coarse: PW=" + pw +
+                     (String)" gap=" + gap +
+                     (String)"us duty=" + dutyPercent +
+                     (String)"% tolDuty≈" + toleranceDutyPercent + "%");
+    }
+
+    if (absGapDiff < bestGap) {
+      bestGap = absGapDiff;
+      bestCandidate = pw;
+    }
+
+    if (havePrev) {
+      // Check for sign change between prevGap and gap (relative to target duty)
+      if ((gapDiff > 0.0 && prevGap < 0.0) || (gapDiff < 0.0 && prevGap > 0.0)) {
+        haveBracket = true;
+        pwLow = prevPW;
+        gapLow = prevGap;
+        pwHigh = pw;
+        gapHigh = gap;
+        break;
+      }
+    }
+
+    havePrev = true;
+    // For the bracket we keep the raw gap value; we subtract gapTarget only
+    // when computing gapDiff.
+    prevGap = gap;
+    prevPW = pw;
+  }
+
+  // If we didn't find a bracket, fall back to the best coarse candidate.
+  if (!haveBracket) {
+    Serial.println("PW center: no sign-change bracket found, using best coarse candidate.");
+  } else {
+    // ---- Phase 2: Bisection search within the bracket ----
+    for (int iter = 0; iter < 14; ++iter) {
+      if (millis() - DCOCalibrationStart > 60000) {
+        Serial.println("PW center bisection timeout (60s)");
+        break;
+      }
+
+      uint16_t pwMid = (uint16_t)((pwLow + pwHigh) / 2);
+      pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                         pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                         pwMid);
+      delay(30);
+
+      GapMeasurement gm = measure_gap(2);
+      if (gm.timedOut) {
+        // If we can't get a valid reading here, stop refining and keep best so far.
+        Serial.println("PW center: timeout during bisection, keeping best candidate.");
+        break;
+      }
+
+      double gapMid = (double)gm.value;
+      double gapDiffMid = gapMid - gapTarget;
+      double absGapDiffMid = abs(gapDiffMid);
+      if (absGapDiffMid < bestGap) {
+        bestGap = absGapDiffMid;
+        bestCandidate = pwMid;
+      }
+
+      if (autotuneDebug >= 2 && periodUs > 0.0) {
+        double dutyErrorFrac = -gapMid / (2.0 * periodUs);
+        double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+        Serial.println((String)"PW bisect: PW=" + pwMid +
+                       (String)" gap=" + gapMid +
+                       (String)"us duty=" + dutyPercent +
+                       (String)"% tolDuty≈" + toleranceDutyPercent + "%");
+      }
+
+      // Early exit if we're within the original target gap.
+      if (absGapDiffMid <= (double)targetGap) {
+        break;
+      }
+
+      // Maintain the sign-change bracket.
+      if ((gapDiffMid > 0.0 && (gapLow - gapTarget) > 0.0) ||
+          (gapDiffMid < 0.0 && (gapLow - gapTarget) < 0.0)) {
+        pwLow = pwMid;
+        gapLow = gapMid;
+      } else {
+        pwHigh = pwMid;
+        gapHigh = gapMid;
+      }
+
+      if (pwHigh - pwLow <= 1) {
+        // Can't refine further in integer PW space.
+        break;
+      }
+    }
+  }
+
+  if (autotuneDebug >= 1) {
+    Serial.println((String)"PW search best gap: " + bestGap +
+                   (String)" at PW: " + bestCandidate);
+  }
+
+  return bestCandidate;
+}
+
 // Locate PW center for the current DCO's voice by minimizing duty-cycle error
 // at a reference note. Mode 0 = low note, mode 1 = higher note refinement.
 void find_PW_center(uint8_t mode) {
@@ -233,8 +399,6 @@ void find_PW_center(uint8_t mode) {
   currentNoteCalibrationStart = micros();
   DCOCalibrationStart = millis();
 
-
-
   PIDOutputLowerLimit = 0;
   PIDOutputHigherLimit = DIV_COUNTER_PW;
 
@@ -252,112 +416,10 @@ void find_PW_center(uint8_t mode) {
 
   voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
 
-  DCO_calibration_difference = 4000;
-  lastDCODifference = 50000;
-  lastGapFlipCount = 0;
-  lastPIDgap = 50000;
-  bestGap = 50000;
-  bestCandidate = 50000;
-  lastampCompCalibrationVal = 0;
-  edgeDetectionLastTime = 0;
-  PIDMinGapCounter = 0;
-  pulseCounter = 0;
-
-  while (bestGap > targetGap) {
-
-    // Global timeout guard: avoid getting stuck if we cannot reach the target
-    // gap or measurements are unreliable. If 30 seconds have elapsed since
-    // the start of this PW-centre search, break out of the loop.
-    if (millis() - DCOCalibrationStart > 30000) {
-      Serial.println("PW center search timeout (30s)");
-      break;
-    }
-
-    pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PWCalibrationVal);
-
-    delay(30);
-
-    double PIDgap;
-    double difference;
-
-    // Measure duty-cycle gap and interpret timeout as "reuse last values".
-    GapMeasurement gm = measure_gap(2);  // distance away from setpoint
-    if (!gm.timedOut) {
-      PIDgap = abs(gm.value);
-      difference = gm.value;
-    } else {
-      difference = lastDCODifference;
-      PIDgap = lastPIDgap;
-    }
-
-    if (PIDgap < bestGap) {
-      bestGap = PIDgap;
-      bestCandidate = PWCalibrationVal;
-    }
-
-    bool calibrationSwing = false;
-
-    if ((difference < 0 && lastDCODifference > 0) || (difference > 0 && lastDCODifference < 0)) {
-      lastGapFlipCount++;
-      if (lastGapFlipCount >= 4) {
-        Serial.println("*********************/*/*/*/*/*/  FLIP !!! *********************/*/*/*/*/*/*********");
-
-        calibrationSwing = true;
-      }
-    } else {
-      lastGapFlipCount = 0;
-    }
-
-    if (bestGap < targetGap || calibrationSwing == true) {
-
-      PIDMinGapCounter++;
-
-      if (PIDMinGapCounter >= 2) {
-        if (autotuneDebug >= 1) {
-          Serial.println((String)(String) " - Gap = " + PIDgap + " - MIN Gap: " + (targetGap) + (String) " - " + DCO_calibration_current_note);
-        }
-        Serial.println((String) "Final gap = " + PIDgap);
-        break;
-      }
-    }
-
-    if (autotuneDebug >= 1) {
-      Serial.println((String) " - GAP = " + PIDgap + " - MIN GAP: " + (targetGap) + (String) " -  NOTE: " + DCO_calibration_current_note);
-    }
-
-    lastDCODifference = difference;
-    lastPIDgap = PIDgap;
-
-    if (difference > 0.00) {
-      if (PIDgap >= 4000) {
-        PWCalibrationVal += 5;
-      } else if (PIDgap > 2000) {
-        PWCalibrationVal += 5;
-      } else if (PIDgap > 1200) {
-        PWCalibrationVal += 2;
-      } else {
-        PWCalibrationVal++;
-      }
-    } else if (difference < 0.00) {
-      if (PIDgap >= 4000) {
-        PWCalibrationVal -= 5;
-      } else if (PIDgap > 2000) {
-        PWCalibrationVal -= 3;
-      } else if (PIDgap > 1200) {
-        PWCalibrationVal -= 2;
-      } else {
-        PWCalibrationVal--;
-      }
-    }
-    if (PWCalibrationVal > DIV_COUNTER_PW) { PWCalibrationVal = 0; }
-
-    if (autotuneDebug >= 1) {
-      Serial.println((String) "PWCalibrationVal: " + PWCalibrationVal);
-    }
-  }
+  uint16_t centerPW = find_PW_for_target_duty(kPWCenterDutyFraction, targetGap);
   Serial.println("PW center found !!!");
-  update_FS_PWCenter(currentDCO / 2, bestCandidate);  //bestCandidate;
-  PW_CENTER[currentDCO / 2] = bestCandidate;
+  update_FS_PWCenter(currentDCO / 2, centerPW);
+  PW_CENTER[currentDCO / 2] = centerPW;
 }
 
 /////////////////////////////////
@@ -365,117 +427,71 @@ void find_PW_center(uint8_t mode) {
 ////////////////////////////////
 
 // Find a lower PW limit for the current DCO's voice at which duty/frequency
-// behaviour remains acceptable. Uses find_gap() as the error metric.
+// behaviour remains acceptable. Uses the shared PW search with a low duty
+// fraction target (e.g. 10% duty).
 void find_PW_low_limit() {
   DCO_calibration_current_note = DCO_calibration_start_note;
   VOICE_NOTES[0] = DCO_calibration_current_note;
-  uint16_t targetGap = 1000000.00f / sNotePitches[DCO_calibration_current_note - 12] * 0.01;
-
 
   currentNoteCalibrationStart = micros();
   DCOCalibrationStart = millis();
-  DCO_calibration_difference = 10000;
-  PIDMinGap = 100;
-
-  samplesNumber = 52;
-
-  sampleTime = (1000000 / sNotePitches[DCO_calibration_current_note - 12]) * ((samplesNumber - 1) / 2);
-
-  PW[currentDCO / 2] = PW_CENTER[currentDCO / 2] / 2;
-  PWCalibrationVal = PW[currentDCO / 2];
 
   PIDOutputLowerLimit = 0;
   PIDOutputHigherLimit = DIV_COUNTER_PW;
 
-  PWCalibrationVal = PW[currentDCO / 2];
-  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PW[currentDCO / 2]);
+  // Use a gap tolerance proportional to the period (1% of period as before).
+  uint16_t targetGap = (uint16_t)(1000000.00f / sNotePitches[DCO_calibration_current_note - 12] * 0.01f);
 
+  // Initialize PW somewhere in the lower half of the range as a starting point.
+  PW[currentDCO / 2] = PW_CENTER[currentDCO / 2] / 2;
+  PWCalibrationVal = PW[currentDCO / 2];
+  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                     pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                     PW[currentDCO / 2]);
+
+  // Configure the DCO for PW calibration mode.
   voice_task_autotune(3, 0);
 
   delay(100);
 
-  DCO_calibration_difference = 4000;
-  lastDCODifference = 50000;
-  lastGapFlipCount = 0;
-  lastPIDgap = 50000;
-  bestGap = 50000;
-  bestCandidate = 50000;
-  lastampCompCalibrationVal = 0;
-  edgeDetectionLastTime = 0;
-  PIDMinGapCounter = 0;
-  pulseCounter = 0;
+  uint16_t lowPW = find_PW_for_target_duty(kPWLowDutyFraction, targetGap);
+  Serial.println("PW low limit found !!!");
+  update_FS_PW_Low_Limit(currentDCO / 2, lowPW);
+  PW_LOW_LIMIT[currentDCO / 2] = lowPW;
+}
 
-  while (abs(targetGap - DCO_calibration_difference)) {
+// Find a higher PW limit for the current DCO's voice at which duty/frequency
+// behaviour remains acceptable. Uses the shared PW search with a high duty
+// fraction target (e.g. 90% duty).
+void find_PW_high_limit() {
+  DCO_calibration_current_note = DCO_calibration_start_note;
+  VOICE_NOTES[0] = DCO_calibration_current_note;
 
-    pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PWCalibrationVal);
+  currentNoteCalibrationStart = micros();
+  DCOCalibrationStart = millis();
 
-    delay(30);
+  PIDOutputLowerLimit = 0;
+  PIDOutputHigherLimit = DIV_COUNTER_PW;
 
-    find_gap(0);
+  // Use a gap tolerance proportional to the period (1% of period as before).
+  uint16_t targetGap = (uint16_t)(1000000.00f / sNotePitches[DCO_calibration_current_note - 12] * 0.01f);
 
-    double PIDgap = abs(targetGap - DCO_calibration_difference);  // distance away from setpoint
+  // Initialize PW somewhere in the upper half of the range as a starting point.
+  PW[currentDCO / 2] = (PW_CENTER[currentDCO / 2] + DIV_COUNTER_PW) / 2;
+  PWCalibrationVal = PW[currentDCO / 2];
+  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                     pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                     PW[currentDCO / 2]);
 
-    bool calibrationSwing = false;
+  // Configure the DCO for PW calibration mode.
+  voice_task_autotune(3, 0);
 
-    if ((DCO_calibration_difference < 0 && lastDCODifference > 0) || (DCO_calibration_difference > 0 && lastDCODifference < 0)) {
-      lastGapFlipCount++;
-      if (lastGapFlipCount >= 16) {
-        Serial.println("*********************/*/*/*/*/*/  FLIP !!! *********************/*/*/*/*/*/*********");
+  delay(100);
 
-        calibrationSwing = true;
-      }
-    } else {
-      lastGapFlipCount = 0;
-    }
-
-    if (PIDgap < PIDMinGap || calibrationSwing == true) {
-
-      PIDMinGapCounter++;
-
-      if (PIDMinGapCounter >= 2) {
-        if (autotuneDebug >= 1) {
-          Serial.println((String)(String) " - Gap = " + PIDgap + " - MIN Gap: " + (PIDMinGap) + (String) " - " + DCO_calibration_current_note);
-        }
-        Serial.println((String) "Final gap = " + PIDgap);
-      }
-    }
-
-    if (autotuneDebug >= 1) {
-      Serial.println((String) " - GAP = " + PIDgap + " - MIN GAP: " + (PIDMinGap) + (String) " -  NOTE: " + DCO_calibration_current_note);
-    }
-
-    lastDCODifference = DCO_calibration_difference;
-    lastPIDgap = PIDgap;
-
-    if (DCO_calibration_difference < 0.00) {
-      if (DCO_calibration_difference >= 1500) {
-        PWCalibrationVal += 5;
-      } else if (abs(DCO_calibration_difference) > 1000) {
-        PWCalibrationVal += 5;
-      } else if (abs(DCO_calibration_difference) > 400) {
-        PWCalibrationVal += 2;
-      } else {
-        PWCalibrationVal++;
-      }
-    } else if (DCO_calibration_difference > 0.00) {
-      if (abs(DCO_calibration_difference) >= 1500) {
-        PWCalibrationVal -= 5;
-      } else if (abs(DCO_calibration_difference) > 1000) {
-        PWCalibrationVal -= 3;
-      } else if (abs(DCO_calibration_difference) > 400) {
-        PWCalibrationVal -= 2;
-      } else {
-        PWCalibrationVal--;
-      }
-    }
-    if (PWCalibrationVal > DIV_COUNTER_PW) { PWCalibrationVal = 0; }
-
-    if (autotuneDebug >= 1) {
-      Serial.println((String) "PWCalibrationVal: " + PWCalibrationVal);
-    }
-  }
-  update_FS_PW_Low_Limit(currentDCO / 2, PWCalibrationVal);  //bestCandidate?;
-  PW_LOW_LIMIT[currentDCO / 2] = PWCalibrationVal;
+  uint16_t highPW = find_PW_for_target_duty(kPWHighDutyFraction, targetGap);
+  Serial.println("PW high limit found !!!");
+  update_FS_PW_High_Limit(currentDCO / 2, highPW);
+  PW_HIGH_LIMIT[currentDCO / 2] = highPW;
 }
 
 // Measure duty-cycle error on DCO_calibration_pin by timing rising/falling

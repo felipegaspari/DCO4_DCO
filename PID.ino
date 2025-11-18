@@ -500,11 +500,20 @@ void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
     double freqHz = sNotePitches[VOICE_NOTES[0] - 12];
     tolerance = compute_gap_tolerance_for_freq(freqHz, dutyErrorFraction);
 
+    // For debugging, report the effective duty-cycle tolerance in percent.
+    double periodUs = (freqHz > 0.0) ? (1000000.0 / freqHz) : 0.0;
+    double toleranceDutyPercent = 0.0;
+    if (periodUs > 0.0) {
+      double tolDutyFrac = tolerance / (2.0 * periodUs);
+      toleranceDutyPercent = tolDutyFrac * 100.0;
+    }
+
     Serial.println((String) "Current DCO: " + ctx.dcoIndex);
     Serial.println((String) "Calibration note: " + VOICE_NOTES[0]);
     Serial.println((String) "Calibration note freq: " + sNotePitches[VOICE_NOTES[0] - 12]);
     Serial.println((String) "Calibration note amplitude: " + currentAmpCompCalibrationVal);
-    Serial.println((String) "Tolerance: " + tolerance);
+    Serial.println((String) "Tolerance (us): " + tolerance);
+    Serial.println((String) "Tolerance duty approx (%): " + toleranceDutyPercent);
     Serial.println((String) "MinAmpComp: " + minAmpComp);
     Serial.println((String) "MaxAmpComp: " + maxAmpComp);
 
@@ -524,6 +533,16 @@ void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
 
     while (true) {
       float avgValue = measure_gap_for_amp(currentAmpCompCalibrationVal);
+
+      // Optional debug: report current duty and tolerance when enabled.
+      if (autotuneDebug >= 2 && periodUs > 0.0) {
+        double dutyErrorFrac = -(double)avgValue / (2.0 * periodUs);
+        double dutyPercent = (0.5 + dutyErrorFrac) * 100.0;
+        Serial.println((String)"DCO calib: AMP=" + currentAmpCompCalibrationVal +
+                       (String)" gap=" + avgValue +
+                       (String)"us duty=" + dutyPercent +
+                       (String)"% tolDuty≈" + toleranceDutyPercent + "%");
+      }
 
       // Update best candidate only if the measurement is valid (not a timeout)
       // and closer to zero than what we've seen before.

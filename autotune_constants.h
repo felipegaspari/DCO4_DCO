@@ -16,6 +16,14 @@ constexpr unsigned long kGapTimeoutUs = 100000UL;
 // them as valid (simple debounce).
 constexpr unsigned long kEdgeDebounceMinUs = 30UL;
 
+// Target duty fractions for PW calibration:
+//  - Center:  50% duty
+//  - Low:     10% duty (user-adjustable if desired)
+//  - High:    90% duty (user-adjustable if desired)
+constexpr double kPWCenterDutyFraction = 0.5;
+constexpr double kPWLowDutyFraction    = 0.02;
+constexpr double kPWHighDutyFraction   = 0.98;
+
 #endif  // __AUTOTUNE_CONSTANTS_H__
 
 

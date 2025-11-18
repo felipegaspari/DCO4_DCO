@@ -125,8 +125,11 @@ void init_FS() {
 void update_FS_voice(byte voiceN) {
   byte calibrationDataBytes[FSVoiceDataSize];
 
-  for (int i; i < chanLevelVoiceDataSize; i++) {
-    //freq_to_amp_comp_array[i + (voiceN * chanLevelVoiceDataSize) ] = calibrationData[i]; // needs to be active - check/fix
+  // Serialize calibrationData (uint32_t pairs: [freq_x100, pwm]) for this voice
+  // into a contiguous byte buffer. Each entry is written little-endian.
+
+  for (int i = 0; i < chanLevelVoiceDataSize; i++) {
+    // freq_to_amp_comp_array[i + (voiceN * chanLevelVoiceDataSize)] = calibrationData[i]; // can be used for in-RAM updates if desired
     byte *b = (byte *)&calibrationData[i];
     for (int j = 0; j < 4; j++) {
       calibrationDataBytes[i * 4 + j] = b[j];
