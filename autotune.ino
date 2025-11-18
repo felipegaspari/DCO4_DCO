@@ -108,14 +108,19 @@ void DCO_calibration() {
     pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), ampCompCalibrationVal);
 
     if ((currentDCO % 2) == 0) {
-      if (firstTuneFlag == true) {
-        find_PW_center(0);
-        pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2], pwm_gpio_to_channel(PW_PINS[currentDCO / 2]), PW_CENTER[currentDCO / 2]);
+      // For each voice (even-indexed DCO), calibrate PW center, low limit,
+      // and high limit using the shared PW search routines.
+      // Mode 0 = low note PW center (used for both limits as well).
+      find_PW_center(0);
+      find_PW_low_limit();
+      find_PW_high_limit();
 
-      } else {
-        find_PW_center(0);  // Should be on. off for testing!!!!!!
-        //find_PW_low_limit();
-      }
+      // After PW calibration, set PW to the calibrated center for this voice
+      // so that subsequent DCO amplitude calibration runs from a good PW.
+      pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                         pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                         PW_CENTER[currentDCO / 2]);
+
     } else {
       DCO_calibration_current_note = DCO_calibration_start_note;
       VOICE_NOTES[0] = DCO_calibration_current_note;
