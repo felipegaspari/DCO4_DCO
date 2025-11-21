@@ -24,6 +24,12 @@ constexpr double kPWCenterDutyFraction = 0.5;
 constexpr double kPWLowDutyFraction    = 0.02;
 constexpr double kPWHighDutyFraction   = 0.98;
 
+// Polarity of the digital calibration signal on DCO_calibration_pin.
+// If your hardware inverts the waveform (so the pin is high when the
+// actual DCO output is low, and vice versa), set this to true. All duty
+// measurements (find_gap / measure_gap) will automatically compensate.
+constexpr bool kGapPolarityInverted    = false;   // set to false for non-inverted hardware
+
 // Duty tolerance used when validating PW low/high limits and PW center lock-in.
 // A sample whose duty is within ±kPWLimitDutyTolerance of the target
 // low/center/high duty is considered "in tolerance".

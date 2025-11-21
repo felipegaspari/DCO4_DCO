@@ -260,15 +260,8 @@ static void apply_param_manual_calibration_flag(int16_t v) {
       uint8_t idx    = osc;
       uint8_t offset = (uint8_t)manualCalibrationOffset[osc];
       uint16_t packed = ((uint16_t)idx << 8) | offset;
-      // Send as 32-bit frame; receivers use lower 16 bits [index:8|offset:8].
+      // Send as 32-bit frame; receivers use lower 16 bits [index:8|offset:8].      
       serialSendParam32(PARAM_MANUAL_CALIBRATION_OFFSET_FROM_DCO, (uint32_t)packed);
-    }
-  }
-
-  // Falling edge (non-zero -> 0): persist final offsets to FS.
-  if (v == 0 && manualCalibrationFlag) {
-    for (uint8_t osc = 0; osc < NUM_OSCILLATORS; ++osc) {
-      update_FS_ManualCalibrationOffset(osc, manualCalibrationOffset[osc]);
     }
   }
 
@@ -285,6 +278,15 @@ static void apply_param_manual_calibration_offset(int16_t v) {
   // initManualAmpCompCalibrationVal[manualCalibrationStage / 2] =
   //   initManualAmpCompCalibrationValPreset +
   //   manualCalibrationOffset[manualCalibrationStage / 2]; // WAS WRONG ?
+}
+
+// Explicit "store manual calibration offsets" command. This is called when
+// the user confirms manual calibration on the input controller, and is the
+// only place where we persist manualCalibrationOffset[] to the filesystem.
+static void apply_param_manual_calibration_store(int16_t /*v*/) {
+  for (uint8_t osc = 0; osc < NUM_OSCILLATORS; ++osc) {
+    update_FS_ManualCalibrationOffset(osc, manualCalibrationOffset[osc]);
+  }
 }
 
 // ---- Parameter table ------------------------------------------------
@@ -321,7 +323,8 @@ static const ParamDescriptorT<int16_t> paramTable[] = {
   { PARAM_CALIBRATION_FLAG,          apply_param_calibration_flag },
   { PARAM_MANUAL_CALIBRATION_FLAG,   apply_param_manual_calibration_flag },
   { PARAM_MANUAL_CALIBRATION_STAGE,  apply_param_manual_calibration_stage },
-  { PARAM_MANUAL_CALIBRATION_OFFSET, apply_param_manual_calibration_offset }
+  { PARAM_MANUAL_CALIBRATION_OFFSET, apply_param_manual_calibration_offset },
+  { PARAM_MANUAL_CALIBRATION_STORE,  apply_param_manual_calibration_store }
 };
 
 static const size_t paramTableSize =

@@ -17,19 +17,41 @@ static void disable_all_oscillators_and_range_pwm() {
     PIO pioN = pio[VOICE_TO_PIO[i]];
     uint8_t sm1N = VOICE_TO_SM[i];
 
-    uint32_t clk_div1 = 200;
+    uint32_t clk_div1 = sysClock_Hz;
 
     pio_sm_put(pioN, sm1N, clk_div1);
     pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), 0);
+    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), DIV_COUNTER);
+
+    pio_sm_set_enabled(pioN, sm1N, false);
+
+    reset_even_pw_to_0();
   }
 }
 
 // Helper: set PW for all even-indexed voices to the center value.
 static void reset_even_pw_to_center() {
-  for (int i = 0; i < NUM_VOICES_TOTAL; i += 2) {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
     PW[i] = DIV_COUNTER_PW / 2;
     pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
+  }
+}
+
+static void reset_even_pw_to_0() {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), 0);
+  }
+}
+
+static void reset_even_pw_to_DIV_COUNTER_PW() {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), DIV_COUNTER_PW);
+  }
+}
+
+static void reset_even_pw_to_mid_point() {
+  for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
+    pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), DIV_COUNTER_PW / 2);
   }
 }
 
@@ -49,7 +71,7 @@ void init_DCO_calibration() {
   arrayPos += 2;
 
   calibrationData[arrayPos] = (uint32_t)(sNotePitches[manual_DCO_calibration_start_note - 12] * 100);
-  calibrationData[arrayPos + 1] = initManualAmpCompCalibrationVal[currentDCO];
+  calibrationData[arrayPos + 1] = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
 
   arrayPos += 2;
 
@@ -68,7 +90,6 @@ void init_DCO_calibration() {
 
   // TURN OFF ALL OSCILLATORS and reset PW for even voices.
   disable_all_oscillators_and_range_pwm();
-  reset_even_pw_to_center();
 
   // DISABLE PW PWM
   // for (int i = 0; i < NUM_VOICES_TOTAL; i++) {
@@ -76,8 +97,6 @@ void init_DCO_calibration() {
   //   pwm_set_chan_level(PW_PWM_SLICES[i], pwm_gpio_to_channel(PW_PINS[i]), PW[i]);
   //   pwm_set_enabled(PW_PWM_SLICES[i], false);
   // }
-
-  voice_task_autotune(0, PIDLimitsFormula);  //what value goes here?
 
   delay(100);
 
@@ -105,7 +124,6 @@ void DCO_calibration() {
 
   // TURN OFF ALL OSCILLATORS and reset PW for even voices.
   disable_all_oscillators_and_range_pwm();
-  reset_even_pw_to_center();
 
   for (int i = 0; i < NUM_OSCILLATORS; i++) {
     currentDCO = i;
@@ -113,7 +131,7 @@ void DCO_calibration() {
     restart_DCO_calibration();
 
     ampCompCalibrationVal = initManualAmpCompCalibrationVal[currentDCO] + manualCalibrationOffset[currentDCO];
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), ampCompCalibrationVal);
+    pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO], pwm_gpio_to_channel(RANGE_PINS[currentDCO]), ampCompCalibrationVal);
 
     DCO_calibration_current_note = manual_DCO_calibration_start_note;
     VOICE_NOTES[0] = DCO_calibration_current_note;
@@ -122,7 +140,7 @@ void DCO_calibration() {
       // For each voice (even-indexed DCO), calibrate PW center, low limit,
       // and high limit using the shared PW search routines.
       // Mode 0 = low note PW center (used for both limits as well).
-        find_PW_center(0);
+      find_PW_center(0);
       find_PW_limit(PW_LIMIT_LOW);
       find_PW_limit(PW_LIMIT_HIGH);
 
@@ -172,8 +190,6 @@ void DCO_calibration() {
     // find_PW_limit(PW_LIMIT_LOW);
     // find_PW_limit(PW_LIMIT_HIGH);
     // }
-
-    restart_DCO_calibration();
   }
   calibrationFlag = false;
   init_FS();
@@ -207,9 +223,12 @@ void restart_DCO_calibration() {
   DCO_calibration_difference = 10000;
   PIDMinGap = 300;
 
-
   // TURN OFF ALL OSCILLATORS for a clean restart.
   disable_all_oscillators_and_range_pwm();
+
+  PIO pioN = pio[VOICE_TO_PIO[currentDCO]];
+  uint8_t sm1N = VOICE_TO_SM[currentDCO];
+  pio_sm_set_enabled(pioN, sm1N, true);
 
   delay(100);
 
@@ -1092,71 +1111,71 @@ void find_PW_limit(PWLimitDir dir) {
         int consecutiveTimeouts = 0;
         for (uint16_t pwFine = bestCoarsePW; pwFine > 0; --pwFine) {
           if (pwFine < minPW) break;
-          pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
-                             pwm_gpio_to_channel(PW_PINS[voiceIdx]),
-                             pwFine);
+            pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                               pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                               pwFine);
           PW[voiceIdx]           = pwFine;
           g_lastPWMeasurementRaw = pwFine;
-          delay(30);
+            delay(30);
 
-          GapMeasurement gmFine = measure_gap(2);
-          if (gmFine.timedOut || periodUs <= 0.0) {
+            GapMeasurement gmFine = measure_gap(2);
+            if (gmFine.timedOut || periodUs <= 0.0) {
             // Once we start consistently losing signal we can stop refining
             // after a few consecutive timeouts to avoid spending a long time
             // deep in the invalid region.
             if (++consecutiveTimeouts >= 4) {
               break;
+              }
+              continue;
             }
-            continue;
-          }
           consecutiveTimeouts = 0;
 
-          double gapFine = (double)gmFine.value;
+            double gapFine = (double)gmFine.value;
           double dutyErrorFracFine = gapFine / (2.0 * periodUs);
-          double dutyFine = 0.5 + dutyErrorFracFine;
+            double dutyFine = 0.5 + dutyErrorFracFine;
           double deltaFine = fabs(dutyFine - targetDutyLow);
 
-          if (deltaFine < bestDeltaLocal) {
-            bestDeltaLocal = deltaFine;
-            bestPWLocal    = pwFine;
-          }
+            if (deltaFine < bestDeltaLocal) {
+              bestDeltaLocal = deltaFine;
+              bestPWLocal    = pwFine;
+            }
 
           if (pwFine == 0) {
-            break;
+              break;
+            }
           }
-        }
       } else { // PW_LIMIT_HIGH
         int consecutiveTimeouts = 0;
         for (uint16_t pwFine = bestCoarsePW; pwFine < DIV_COUNTER_PW; ++pwFine) {
           if (pwFine > maxPW) break;
-          pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
-                             pwm_gpio_to_channel(PW_PINS[voiceIdx]),
-                             pwFine);
+        pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                           pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                           pwFine);
           PW[voiceIdx]           = pwFine;
           g_lastPWMeasurementRaw = pwFine;
-          delay(30);
+        delay(30);
 
-          GapMeasurement gmFine = measure_gap(2);
-          if (gmFine.timedOut || periodUs <= 0.0) {
+        GapMeasurement gmFine = measure_gap(2);
+        if (gmFine.timedOut || periodUs <= 0.0) {
             if (++consecutiveTimeouts >= 4) {
               break;
-            }
-            continue;
           }
+          continue;
+        }
           consecutiveTimeouts = 0;
 
-          double gapFine = (double)gmFine.value;
+        double gapFine = (double)gmFine.value;
           double dutyErrorFracFine = gapFine / (2.0 * periodUs);
-          double dutyFine = 0.5 + dutyErrorFracFine;
+        double dutyFine = 0.5 + dutyErrorFracFine;
           double deltaFine = fabs(dutyFine - targetDutyLow);
 
-          if (deltaFine < bestDeltaLocal) {
-            bestDeltaLocal = deltaFine;
-            bestPWLocal    = pwFine;
-          }
+        if (deltaFine < bestDeltaLocal) {
+          bestDeltaLocal = deltaFine;
+          bestPWLocal    = pwFine;
+        }
 
-          if (pwFine >= DIV_COUNTER_PW - 1) {
-            break;
+        if (pwFine >= DIV_COUNTER_PW - 1) {
+          break;
           }
         }
       }
@@ -1341,7 +1360,7 @@ void find_PW_limit(PWLimitDir dir) {
     PW_LOW_LIMIT[voiceIdx] = limitPW;
   } else {
     Serial.println("--------------------------------");
-    Serial.println("PW high limit found !!!");
+  Serial.println("PW high limit found !!!");
     Serial.println(
                    (String)" PW_LIMIT=" + limitPW +
                    (String)" lowDuty≈" + finalDutyPercent + "%" +
@@ -1399,7 +1418,10 @@ float find_gap(byte specialMode) {
 
   while (samplesCounter < samplesNumber) {
 
-    bool val = digitalRead(DCO_calibration_pin);
+    bool rawVal = digitalRead(DCO_calibration_pin);
+    // Compensate for hardware polarity if needed so that 'val == 1' always
+    // represents the same logical DCO level for duty measurements.
+    bool val = kGapPolarityInverted ? !rawVal : rawVal;
     microsNow = micros();
     if ((microsNow - edgeDetectionLastTime) > kGapTimeoutUs) {
 
@@ -1691,7 +1713,6 @@ void VCO_calibration() {
 
   // TURN OFF ALL OSCILLATORS and reset PW for even voices.
   disable_all_oscillators_and_range_pwm();
-  reset_even_pw_to_center();
 
   for (int i = 0; i < NUM_OSCILLATORS; i++) {
     currentDCO = i;

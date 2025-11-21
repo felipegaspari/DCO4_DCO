@@ -548,12 +548,12 @@ void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
           // positive => low segment longer (duty < 50%), negative => high longer.
           double dutyErrorFrac = (double)avgValue / (2.0 * periodUs);
           double dutyPercent   = (0.5 + dutyErrorFrac) * 100.0;
-          Serial.println((String)"[DCO_AMP_SCAN] note=" + ctx.currentNote +
-                         (String)" DCO=" + ctx.dcoIndex +
-                         (String)" AMP=" + currentAmpCompCalibrationVal +
-                         (String)" gap=" + avgValue +
-                         (String)"us duty=" + dutyPercent +
-                         (String)"% target=50% tol≈" + toleranceDutyPercent + "%");
+        Serial.println((String)"[DCO_AMP_SCAN] note=" + ctx.currentNote +
+                       (String)" DCO=" + ctx.dcoIndex +
+                       (String)" AMP=" + currentAmpCompCalibrationVal +
+                       (String)" gap=" + avgValue +
+                       (String)"us duty=" + dutyPercent +
+                       (String)"% target=50% tol≈" + toleranceDutyPercent + "%");
         }
       }
 
