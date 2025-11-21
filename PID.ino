@@ -24,11 +24,25 @@ static bool did_sign_change(float previous, float current) {
 // and return the measured duty-cycle gap (or timeout sentinel value).
 // This centralizes the "write PWM, delay, measure gap" pattern so that
 // calibrate_DCO() stays focused on the search logic instead of timing details.
+// IMPORTANT: We normalize the sign here so that a *positive* value means
+// "amplitude too low" and a *negative* value means "amplitude too high",
+// matching the legacy behaviour of the old find_gap() implementation even
+// after the hardware polarity handling was refactored.
 static float measure_gap_for_amp(uint16_t ampPwm) {
   voice_task_autotune(0, ampPwm);
   delay(10);
   GapMeasurement gm = measure_gap(0);
-  return gm.value;
+
+  // Preserve the timeout sentinel exactly so downstream code can reliably
+  // detect "no signal" vs a real small error.
+  if (gm.timedOut) {
+    return kGapTimeoutSentinel;
+  }
+
+  // For valid measurements, flip the sign so calibrate_DCO() continues to
+  // move the PWM in the correct direction regardless of the edge polarity
+  // used inside find_gap().
+  return -gm.value;
 }
 
 // Helper: evaluate neighbour measurements (lower/higher) around the current
@@ -338,10 +352,25 @@ float find_highest_freq() {
   myPID.SetTunings(0.01, 1.2, 0.002);
   myPID.SetSampleTime(5);
 
+  // Initialize to a non-zero value so the loop enters at least once.
+  DCO_calibration_difference = 1000.0f;
+
   while (abs(DCO_calibration_difference) > 0.5) {
     voice_task_autotune(4, DIV_COUNTER);
     delay(4);
-    find_gap(0);
+
+    // Use the same structured gap measurement and sign normalization that the
+    // main calibrate_DCO() path uses, so this function is not sensitive to
+    // hardware polarity changes inside find_gap().
+    GapMeasurement gm = measure_gap(0);
+    if (gm.timedOut) {
+      DCO_calibration_difference = kGapTimeoutSentinel;
+    } else {
+      // Flip sign so that a positive value still means "too low" and negative
+      // means "too high", matching the legacy behaviour.
+      DCO_calibration_difference = -gm.value;
+    }
+
     PIDInput = 0 - (double)DCO_calibration_difference;
 
     myPID.Compute();

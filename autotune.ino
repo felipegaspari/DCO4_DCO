@@ -1376,9 +1376,9 @@ void find_PW_limit(PWLimitDir dir) {
 // edges. Returns 0 when duty is ≈50%, or kGapTimeoutSentinel on timeout.
 float find_gap(byte specialMode) {
   if (specialMode == 2) {  // find lowest freq mode
-    samplesNumber = 14;
+    samplesNumber = 8;
   } else {
-    samplesNumber = 10;
+    samplesNumber = 4;
   }
 
   // Estimate ideal period for the current note so we can reject obviously
