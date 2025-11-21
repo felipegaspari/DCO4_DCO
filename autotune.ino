@@ -17,13 +17,23 @@ static void disable_all_oscillators_and_range_pwm() {
     PIO pioN = pio[VOICE_TO_PIO[i]];
     uint8_t sm1N = VOICE_TO_SM[i];
 
-    uint32_t clk_div1 = sysClock_Hz;
+    uint32_t clk_div1 = sysClock_Hz/1000;
+
+    pio_sm_set_enabled(pioN, sm1N, true);
 
     pio_sm_put(pioN, sm1N, clk_div1);
     pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
     pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), DIV_COUNTER);
+    delay(200);
 
     pio_sm_set_enabled(pioN, sm1N, false);
+
+    gpio_init(RANGE_PINS[i]);
+    // Set the pin direction to output
+    gpio_set_dir(RANGE_PINS[i], GPIO_OUT);
+    // Set the pin state to HIGH
+    gpio_put(RANGE_PINS[i], 1);
+
 
     reset_even_pw_to_0();
   }
@@ -1376,9 +1386,9 @@ void find_PW_limit(PWLimitDir dir) {
 // edges. Returns 0 when duty is ≈50%, or kGapTimeoutSentinel on timeout.
 float find_gap(byte specialMode) {
   if (specialMode == 2) {  // find lowest freq mode
-    samplesNumber = 8;
+    samplesNumber = 12;
   } else {
-    samplesNumber = 4;
+    samplesNumber = 6;
   }
 
   // Estimate ideal period for the current note so we can reject obviously
