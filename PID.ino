@@ -393,101 +393,72 @@ float find_highest_freq() {
   return PIDOutput * 100;
 }
 
-#if 0  // LEGACY_FIND_LOWEST_FREQ (unused helper)
+// Estimate the lowest reachable frequency for the current DCO using the
+// latest [freq -> PWM] calibration data and a polynomial fit, assuming
+// an amp compensation (range PWM) of 0. This is conceptually symmetric
+// to find_highest_freq(), but instead of running a full PID loop we
+// derive the starting point from the same interpolation strategy used
+// in calibrate_DCO().
+//
+// Return value: estimated lowest frequency * 100 (same units as
+// calibrationData[] entries and find_highest_freq()).
 float find_lowest_freq() {
+  // Use amp compensation (range PWM) = 0 as requested.
+  ampCompCalibrationVal = 0;
 
-  DCO_calibration_difference = 1000;
-
-  ampCompCalibrationVal = ampCompLowestFreqVal;
-  PIDTuningMultiplier = 0.28752775 * pow(1.00408722, 1779);
-  PIDTuningMultiplierKi = 0.33936558 * pow(1.00702176, 1779);
-  PIDInput = 100;
-
-  double PIDLowerLimit = 2;
-  double PIDUpperLimit = sNotePitches[manual_DCO_calibration_start_note ];
-  uint16_t targetGap = 100;
-
-  myPID.SetOutputLimits(PIDLowerLimit, PIDLowerLimit);
-  myPID.SetTunings(0.000004, 0.000007, 0.0000001);
-  myPID.SetSampleTime(300);
-
-  int validValuesArraySize = 50;
-  double gapArray[validValuesArraySize];
-  double validValuesArray[validValuesArraySize];
-
-  double newLowerLimit = PIDLowerLimit;
-  double newUpperLimit = PIDUpperLimit;
-
-  double closestToZeroNegativeGap = -1000000;
-  double closestToZeroPositiveGap = 1000000;
-  double closestToZero = 1000000;
-  double bestGap = 1000000;
-
-  bool lowestFreqFound = false;
-
-  voice_task_autotune(4, PIDLowerLimit);
-  delay(300);
-
-  while (abs(bestGap) > targetGap) {
-    if (lowestFreqFound) {
-      break;
-    }
-    for (int i = 0; i < validValuesArraySize; i++) {
-
-      PIDOutput = (double)newLowerLimit + ((double)i * (double)((newUpperLimit - newLowerLimit) / (double)validValuesArraySize));
-      validValuesArray[i] = PIDOutput;
-
-      voice_task_autotune(4, PIDOutput);
-      delay(150);
-      // Use structured gap measurement to detect timeouts more clearly.
-      GapMeasurement gm = measure_gap(2);
-      gapArray[i] = (double)gm.value;
-
-      Serial.println((String) "validValuesArray: " + validValuesArray[i]);
-      Serial.println((String) "gapArray: " + gapArray[i]);
-      Serial.println((String) "PIDOutput: " + PIDOutput);
-      Serial.println((String) "i: " + i);
-
-      if (!gm.timedOut) {
-        if (abs(gapArray[i]) < targetGap) {
-          closestToZero = PIDOutput;
-          lowestFreqFound = true;
-          break;
-        }
-        if (gapArray[i] < 0 && closestToZeroNegativeGap < gapArray[i]) {
-          closestToZeroNegativeGap = gapArray[i];
-          newLowerLimit = validValuesArray[i] - (validValuesArray[i] * 0.02);
-        }
-        if (gapArray[i] > 0 && gapArray[i] < closestToZeroPositiveGap) {
-          closestToZeroPositiveGap = gapArray[i];
-          newUpperLimit = validValuesArray[i] + (validValuesArray[i] * 0.02);
-        }
-
-        if (abs(newUpperLimit) < abs(newLowerLimit)) {
-          closestToZero = newUpperLimit;
-        } else {
-          closestToZero = newLowerLimit;
-        }
-
-        if (abs(closestToZeroNegativeGap) < abs(closestToZeroPositiveGap)) {
-          bestGap = closestToZeroNegativeGap;
-        } else {
-          bestGap = closestToZeroPositiveGap;
-        }
-      }
-    }
-
-    Serial.println((String) "newLowerLimit: " + newLowerLimit);
-    Serial.println((String) "newUpperLimit: " + newUpperLimit);
-
-    myPID.SetOutputLimits(newLowerLimit, newUpperLimit);
-    PIDInput = (double)-100;
-    PIDOutput = (double)newUpperLimit - (double)newLowerLimit;
+  // We require at least three calibration points (six entries) to build
+  // a quadratic fit in the [PWM -> freq] direction. The layout of
+  // calibrationData is:
+  //   [0]  reserved / lowestFreq placeholder
+  //   [1]  reserved
+  //   [2]  freq0 * 100
+  //   [3]  pwm0
+  //   [4]  freq1 * 100
+  //   [5]  pwm1
+  //   [6]  freq2 * 100
+  //   [7]  pwm2
+  //   ...
+  //
+  // If we don't have enough data, just return 0.
+  if (chanLevelVoiceDataSize < 8) {
+    return 0.0f;
   }
-  Serial.println((String) "Lowest freq found: " + PIDOutput);
-  return closestToZero * 100;
+
+  float f0 = (float)calibrationData[2];  // already freq * 100
+  float p0 = (float)calibrationData[3];
+  float f1 = (float)calibrationData[4];
+  float p1 = (float)calibrationData[5];
+  float f2 = (float)calibrationData[6];
+  float p2 = (float)calibrationData[7];
+
+  // Guard against degenerate cases where the PWMs are identical.
+  if (p0 == p1 || p1 == p2 || p0 == p2) {
+    // Fall back to a simple linear extrapolation using the first segment.
+    float y = linearInterpolation(p0, f0, p1, f1, 0.0f);
+    return y;
+  }
+
+  // Fit a quadratic in the space PWM -> (freq * 100) and evaluate it at
+  // PWM = 0 to estimate the lowest reachable frequency at amp=0.
+  float estFreqTimes100 = quadraticInterpolation(
+    p0, f0,
+    p1, f1,
+    p2, f2,
+    0.0f
+  );
+
+  // Clamp to a sensible minimum to avoid negative or zero frequencies
+  // from extreme extrapolation.
+  if (estFreqTimes100 < 0.0f) {
+    estFreqTimes100 = 0.0f;
+  }
+
+  Serial.println((String)"[LOWEST_FREQ_EST] DCO=" + currentDCO +
+                 (String)" estFreq*100=" + estFreqTimes100 +
+                 (String)" using PWM points {" + p0 + "," + p1 + "," + p2 + "}");
+
+  return estFreqTimes100;
 }
-#endif  // LEGACY_FIND_LOWEST_FREQ
 
 // Build the [frequency -> amplitude PWM] calibration table for the DCO in ctx.
 // For each calibration note it:
@@ -512,9 +483,20 @@ void calibrate_DCO(DCOCalibrationContext& ctx, double dutyErrorFraction) {
     currentAmpCompCalibrationVal = compute_initial_amp_for_note(ctx, j);
 
     if (currentAmpCompCalibrationVal > DIV_COUNTER * 0.98) {
-      float highestFreqFound = find_highest_freq();
-      ctx.calibrationData[j] = highestFreqFound;
+      // When we hit the top of the usable PWM range, stop the table here.
+      // Record the highest reachable frequency at the current PWM, and also
+      // estimate the lowest reachable frequency at PWM=0 so that the first
+      // table entry remains a true "lowest note" anchor.
+      float highestFreqFound = find_highest_freq();  // Hz * 100
+      float lowestFreqCalc   = find_lowest_freq();   // Hz * 100, at PWM=0
+
+      // Store the highest reachable point at this index.
+      ctx.calibrationData[j]     = (uint32_t)highestFreqFound;
       ctx.calibrationData[j + 1] = DIV_COUNTER;
+
+      // Ensure entry 0 continues to represent the lowest frequency at PWM=0.
+      ctx.calibrationData[0] = (uint32_t)lowestFreqCalc;
+      ctx.calibrationData[1] = 0;
 
       for (int i = j + 2; i < numPresetVoltages; i += 2) {
         ctx.calibrationData[i] = 20000000;

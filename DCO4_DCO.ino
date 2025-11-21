@@ -226,11 +226,14 @@ void loop1() {
 
   if (calibrationFlag == true) {
     if (manualCalibrationFlag == true) {
-      VOICE_NOTES[0] = manual_DCO_calibration_start_note;
+      VOICE_NOTES[0]               = manual_DCO_calibration_start_note;
+      DCO_calibration_current_note = manual_DCO_calibration_start_note;
       ampCompCalibrationVal = initManualAmpCompCalibrationValPreset + manualCalibrationOffset[manualCalibrationStage / 2];
       voice_task_autotune(0, ampCompCalibrationVal);
-      //DCO_calibration_debug(); // disabled because of manual calibration bug on osc 0 offset. needs fix
-      Serial.println((String) "PW value: " + (PW[0] / 4));
+      // In manual calibration mode, continuously measure and report the duty
+      // difference so the screen can display live feedback for the user.
+      DCO_calibration_debug();
+      //Serial.println((String) "PW value: " + (PW[0] / 4));
 
     } else {
       DCO_calibration();

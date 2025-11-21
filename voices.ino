@@ -1785,7 +1785,7 @@ void voice_task_autotune(uint8_t taskAutotuneVoiceMode, uint16_t calibrationValu
 
         pwm_set_chan_level(PW_PWM_SLICES[i / 2], pwm_gpio_to_channel(PW_PINS[i / 2]), 0);
 
-        Serial.println((String) "currentCalibrationOscillator: " + (int)currentCalibrationOscillator + (String) "        calibrationValue: " + (int)calibrationValue);
+        //Serial.println((String) "currentCalibrationOscillator: " + (int)currentCalibrationOscillator + (String) "   calibrationValue: " + (int)calibrationValue);
       }
     }
   } else {

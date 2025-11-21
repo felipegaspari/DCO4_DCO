@@ -10,33 +10,35 @@ static double   g_gapLogCurrentPeriodUs = 0.0;
 static double   g_gapLogTargetDutyFraction = 0.5;  // default 50%
 static double   g_lastGapMeasuredPeriodUs = 0.0;
 
-// Helper: turn off all oscillators and set their range PWMs to 0.
+// Helper: turn off all oscillators and set their RANGE outputs to a known
+// state, while charging their timing capacitors using the original
+// PIO+GPIO sequence. This preserves the analogue behaviour you rely on.
 static void disable_all_oscillators_and_range_pwm() {
   for (int i = 0; i < NUM_OSCILLATORS; i++) {
     uint8_t pioNumber = VOICE_TO_PIO[i];
-    PIO pioN = pio[VOICE_TO_PIO[i]];
-    uint8_t sm1N = VOICE_TO_SM[i];
+    PIO     pioN      = pio[VOICE_TO_PIO[i]];
+    uint8_t sm1N      = VOICE_TO_SM[i];
 
-    uint32_t clk_div1 = sysClock_Hz/1000;
+    // Original "park" frequency used to pre-charge the caps.
+    uint32_t clk_div1 = 200;
 
+    // Run the DCO SM at a known slow rate while driving the RANGE PWM.
     pio_sm_set_enabled(pioN, sm1N, true);
-
     pio_sm_put(pioN, sm1N, clk_div1);
     pio_sm_exec(pioN, sm1N, pio_encode_pull(false, false));
-    pwm_set_chan_level(RANGE_PWM_SLICES[i], pwm_gpio_to_channel(RANGE_PINS[i]), DIV_COUNTER);
+
     delay(200);
 
+    // Stop the SM and hold the RANGE pin high as a plain GPIO output.
     pio_sm_set_enabled(pioN, sm1N, false);
-
     gpio_init(RANGE_PINS[i]);
-    // Set the pin direction to output
     gpio_set_dir(RANGE_PINS[i], GPIO_OUT);
-    // Set the pin state to HIGH
     gpio_put(RANGE_PINS[i], 1);
-
-
-    reset_even_pw_to_0();
   }
+
+  // After all RANGE caps are charged, park all PW PWM channels at 0% so the
+  // centre search can start from a known state. (Matches original behaviour.)
+  reset_even_pw_to_DIV_COUNTER_PW();
 }
 
 // Helper: set PW for all even-indexed voices to the center value.
@@ -233,8 +235,16 @@ void restart_DCO_calibration() {
   DCO_calibration_difference = 10000;
   PIDMinGap = 300;
 
-  // TURN OFF ALL OSCILLATORS for a clean restart.
+  // TURN OFF ALL OSCILLATORS for a clean restart, and pre-charge the
+  // RANGE capacitors using the legacy helper.
   disable_all_oscillators_and_range_pwm();
+
+  // IMPORTANT: disable_all_oscillators_and_range_pwm() leaves RANGE_PINS[]
+  // as plain GPIO outputs driven HIGH. Before starting calibration for the
+  // currentDCO we must restore its RANGE pin back to PWM function so that
+  // voice_task_autotune() and subsequent RANGE PWM writes actually appear
+  // on the physical pin.
+  gpio_set_function(RANGE_PINS[currentDCO], GPIO_FUNC_PWM);
 
   PIO pioN = pio[VOICE_TO_PIO[currentDCO]];
   uint8_t sm1N = VOICE_TO_SM[currentDCO];
@@ -847,6 +857,10 @@ void find_PW_center(uint8_t mode) {
     PW[currentDCO / 2] = PW_CENTER[currentDCO / 2];
     PWCalibrationVal = PW_CENTER[currentDCO / 2];
   }
+  // Center the starting PW
+  pwm_set_chan_level(RANGE_PWM_SLICES[currentDCO / 2],
+                     pwm_gpio_to_channel(RANGE_PINS[currentDCO / 2]),
+                     PW[currentDCO / 2]);
 
   voice_task_autotune(voiceTaskMode, ampCompCalibrationVal);
 
@@ -859,6 +873,14 @@ void find_PW_center(uint8_t mode) {
   Serial.println("PW center found !!!");
   update_FS_PWCenter(currentDCO / 2, centerPW);
   PW_CENTER[currentDCO / 2] = centerPW;
+
+  // Apply the newly found PW center immediately to the hardware so that the
+  // effect is visible on the pulse waveform as soon as calibration finishes.
+  pwm_set_chan_level(PW_PWM_SLICES[currentDCO / 2],
+                     pwm_gpio_to_channel(PW_PINS[currentDCO / 2]),
+                     centerPW);
+  PW[currentDCO / 2]        = centerPW;
+  g_lastPWMeasurementRaw    = centerPW;
 }
 
 /////////////////////////////////
@@ -940,8 +962,88 @@ void find_PW_limit(PWLimitDir dir) {
   double   bestCoarseDelta = 1e12;
   uint16_t bestCoarsePW    = centerPW;
 
-  // Coarse scan from center toward the selected direction.
-  for (uint16_t pw = centerPW; ; ) {
+  // Optional very coarse pre-scan: use a larger step (2x) to quickly
+  // explore farther from the center and establish a good initial
+  // bestCoarsePW and accumulate some valid samples for robustness.
+  if (step > 1) {
+    uint16_t preStep = (uint16_t)(step * 2);
+    if (preStep == 0) preStep = 1;
+
+    for (uint16_t pwPre = centerPW; ; ) {
+      if (millis() - DCOCalibrationStart > 60000) {
+        Serial.println((dir == PW_LIMIT_LOW)
+                       ? "PW low limit pre-scan timeout (60s)"
+                       : "PW high limit pre-scan timeout (60s)");
+        break;
+      }
+
+      uint16_t testPW = pwPre;
+      if (testPW < minPW) testPW = minPW;
+      if (testPW > maxPW) testPW = maxPW;
+
+      pwm_set_chan_level(PW_PWM_SLICES[voiceIdx],
+                         pwm_gpio_to_channel(PW_PINS[voiceIdx]),
+                         testPW);
+      PW[voiceIdx]           = testPW;
+      g_lastPWMeasurementRaw = testPW;
+      delay(30);
+
+      GapMeasurement gmPre = measure_gap(2);
+      if (!gmPre.timedOut && periodUs > 0.0) {
+        totalValidCount++;
+        double gapPre = (double)gmPre.value;
+        double dutyErrorFracPre = gapPre / (2.0 * periodUs);
+        double dutyPre = 0.5 + dutyErrorFracPre;
+
+        if (autotuneDebug >= 2) {
+          Serial.println((String)(dir == PW_LIMIT_LOW ? "[PW_LOW_SCAN_COARSE]" : "[PW_HIGH_SCAN_COARSE]") +
+                         (String)" note=" + DCO_calibration_current_note +
+                         (String)" DCO=" + currentDCO +
+                         (String)" PW_raw=" + testPW +
+                         (String)" lowDuty=" + (dutyPre * 100.0) + "%" +
+                         (String)" targetLowDuty=" + (targetDutyLow * 100.0) + "%");
+        }
+
+        double deltaPre = fabs(dutyPre - targetDutyLow);
+        if (!haveBestCoarse || deltaPre < bestCoarseDelta) {
+          haveBestCoarse  = true;
+          bestCoarseDelta = deltaPre;
+          bestCoarsePW    = testPW;
+        }
+
+        if (fabs(dutyPre - targetDutyLow) <= kPWLimitDutyTolerance) {
+          inToleranceCount++;
+        }
+      }
+
+      // Advance outward in the desired direction with a coarse step.
+      if (dir == PW_LIMIT_LOW) {
+        if (pwPre <= preStep || pwPre <= minPW) {
+          break;
+        }
+        pwPre = (uint16_t)(pwPre - preStep);
+      } else {  // PW_LIMIT_HIGH
+        if (pwPre >= maxPW) {
+          break;
+        }
+        uint32_t next = (uint32_t)pwPre + preStep;
+        if (next >= (uint32_t)maxPW) {
+          pwPre = maxPW;
+          break;
+        } else {
+          pwPre = (uint16_t)next;
+        }
+      }
+    }
+  }
+
+  // Main coarse scan from the best-known coarse PW (if any), otherwise from center.
+  uint16_t startPW = haveBestCoarse ? bestCoarsePW : centerPW;
+  havePrevValid = false;
+  prevDuty      = 0.0;
+  prevPW        = startPW;
+
+  for (uint16_t pw = startPW; ; ) {
     if (millis() - DCOCalibrationStart > 60000) {
       Serial.println((dir == PW_LIMIT_LOW)
                      ? "PW low limit search timeout (60s)"
@@ -1624,91 +1726,53 @@ void DCO_calibration_find_highest_freq() {
 /*************************************************************************************/
 /*************************************************************************************/
 
-// Debug helper: repeatedly measure and print duty-cycle difference for
-// the current note. Not used in normal calibration flow.
+// Debug helper used during manual calibration: measure and report the
+// duty-cycle difference from the target duty (normally 50%) for the
+// current note/DCO. The result is sent to the mainboard as a 32-bit
+// PARAM_GAP_FROM_DCO value, which the screen shows as "GAP".
 void DCO_calibration_debug() {
-  // if (DCO_calibration_current_note > 31) {
-  //   samplesNumber = 25 * 2;
-  // } else if (DCO_calibration_current_note > 51) {
-  //   samplesNumber = 25 * 2;
-  // } else if (DCO_calibration_current_note > 71) {
-  //   samplesNumber = 19 * 2;
-  // } else if (DCO_calibration_current_note > 91) {
-  //   samplesNumber = 15 * 2;
-  // } else {
-  //   samplesNumber = 21 * 2;
-  // }
+  // Reuse the main gap-measurement path (which already handles polarity,
+  // debouncing, and timeouts) so manual calibration sees the same notion
+  // of "gap" as the automatic routines.
+  GapMeasurement gm = measure_gap(0);  // target is 50% duty
 
-  samplesNumber = 12;
+  // Compute duty error relative to the center target (0.5) using the
+  // *ideal* period for the current note. For manual trimming this is
+  // sufficient and keeps the math simple.
+  double dutyErrorPercentTimes100 = 0.0;  // duty error [%] * 100
 
-  edgeDetectionLastTime = micros();
-
-  while (samplesCounter < samplesNumber) {
-    bool val = digitalRead(DCO_calibration_pin);
-    microsNow = micros();
-
-    if ((microsNow - edgeDetectionLastTime) > kGapTimeoutUs) {
-
-      pulseCounter = 0;
-      samplesCounter = 0;
-      DCO_calibration_difference = kGapTimeoutSentinel;
-      val = 0;
-      edgeDetectionLastVal = 0;
-
-      if (autotuneDebug >= 3) {
-        Serial.println("Timeout loop");
-        Serial.println((String) "ampCompCalibrationVal: " + ampCompCalibrationVal);
-      }
-
-      microsNow = micros();
-      edgeDetectionLastTime = microsNow;
-      break;
+  if (!gm.timedOut) {
+    double freqHz = (double)sNotePitches[DCO_calibration_current_note - 12];
+    if (freqHz > 0.0) {
+      double periodUs = 1000000.0 / freqHz;
+      // gm.value is the low-vs-high time difference (avgLowUs - avgHighUs).
+      // For a perfect 50% duty, low and high are equal, so gm.value == 0.
+      // Duty error fraction from 50% is thus:
+      //   duty_low - 0.5 = (avgLowUs - avgHighUs) / (2 * periodUs)
+      double dutyErrorFrac = (double)gm.value / (2.0 * periodUs);
+      double dutyErrorPercent = dutyErrorFrac * 100.0;
+      // Scale by 100 for two decimal digits of resolution on the screen.
+      dutyErrorPercentTimes100 = dutyErrorPercent * 100.0;
     }
-
-    if (val != edgeDetectionLastVal) {
-      if ((microsNow - edgeDetectionLastTime) >= kEdgeDebounceMinUs) {
-
-        edgeDetectionLastVal = val;
-
-        if (pulseCounter == 1 && val == 0) {
-          pulseCounter == 0;
-        }
-        if (pulseCounter > 2) {
-          if (val == 0) {
-            fallingEdgeTimeSum += microsNow - edgeDetectionLastTime;
-//            fallingEdgeTimeSum_counter++;
-          } else {
-            risingEdgeTimeSum += microsNow - edgeDetectionLastTime;
-//            risingEdgeTimeSum_counter++;
-          }
-          samplesCounter++;
-        }
-        edgeDetectionLastTime = microsNow;
-        pulseCounter++;
-      }
-    }
+  } else {
+    // On timeout, propagate a large sentinel so the UI can tell that the
+    // signal is invalid/out of range instead of near 0%.
+    dutyErrorPercentTimes100 = 0;  // or some large sentinel if preferred
   }
 
-  if (samplesCounter == samplesNumber) {
-    //  Serial.print((String) "ON= " + (1000000 / (risingEdgeTimeSum / 45)) + (String) " - ");
-    //  Serial.println((String) "OFF= " + (1000000 / (fallingEdgeTimeSum / 45)));
-
-    // Serial.println(1000000 / ((risingEdgeTimeSum + fallingEdgeTimeSum) / 90));
-    DCO_calibration_difference = ((float)fallingEdgeTimeSum / (samplesNumber / 4) - ((float)risingEdgeTimeSum / (samplesNumber / 4)));
-
-    if (autotuneDebug >= 1) {
-      Serial.println(DCO_calibration_difference);
-      Serial.println((String) "NOTE: " + DCO_calibration_current_note);
-    }
-
-    serialSendParam32(154,(int32_t)DCO_calibration_difference);
-
-    pulseCounter = 0;
-    samplesCounter = 0 ;
-    risingEdgeTimeSum = 0;
-    fallingEdgeTimeSum = 0;
-    edgeDetectionLastVal = 0;
+  if (autotuneDebug >= 1) {
+    Serial.println((String)"[MANUAL_GAP] note=" + DCO_calibration_current_note +
+                   (String)" DCO=" + currentDCO +
+                   (String)" AMP=" + ampCompCalibrationVal +
+                   (String)" gapUs=" + gm.value +
+                   (String)" dutyErr(%)≈" + (dutyErrorPercentTimes100 / 100.0));
   }
+
+  // Send as a 32-bit PARAM_GAP_FROM_DCO value through the standard
+  // param protocol. Mainboard forwards this to the screen, which
+  // stores it in calibrationGap for the "GAP" display.
+  serialSendParam32(PARAM_GAP_FROM_DCO,
+                    (int32_t)dutyErrorPercentTimes100);
 }
 
 
