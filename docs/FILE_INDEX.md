@@ -65,17 +65,26 @@ Main sketch: dual-core setup/loops, USB init, engine build flags.
 - `setup1()` — Core 1 init: PID, FS, ADSR, amp-comp precompute, PWM, PIO, voices; clears cal flags.
   - **Called from:** Arduino framework (Core 1).
   - **When:** Boot once. (`init_DCO_calibration` block below is unreachable — see that function.)
-- `loop()` — Core 0: MIDI read, Serial2 pump, LFO1; ~100 µs LFO2 + drift + FIFO push.
+- `loop()` — Core 0: MIDI read, Serial2 pump, LFO1; ~100 µs LFO2 + drift + FIFO push; `bench_poll_core0()`.
   - **Called from:** Arduino framework (Core 0).
   - **When:** Forever.
-- `loop1()` — Core 1: `millisTimer`; auto/manual cal **or** ADSR + FIFO pop + `voice_task_main`.
+- `loop1()` — Core 1: `millisTimer`; auto/manual cal **or** ADSR + FIFO pop + `voice_task_main`; `bench_service(1)`.
   - **Called from:** Arduino framework (Core 1).
   - **When:** Forever.
-- `print_running_averages()` — Print loop/voice timing averages; calls `print_voice_task_timings()`.
-  - **Called from:** `loop1()` when `RUNNING_AVERAGE` and `timer1000msFlag`.
-  - **When:** Debug ~1 Hz only if profiling enabled.
 
-**Key macros:** `USE_FLOAT_ENGINE`, `USE_FLOAT_VOICE_TASK`, `USE_FLOAT_AMP_COMP`, `PITCH_USE_RATIO_Q16`, `PITCH_INTERP_USE_Q*`, `HIGH_PRECISION_CLKDIV`.
+**Key macros:** `RUNNING_AVERAGE` (default on), `USE_FLOAT_ENGINE`, `USE_FLOAT_VOICE_TASK`, `USE_FLOAT_AMP_COMP`, `PITCH_USE_RATIO_Q16`, `PITCH_INTERP_USE_Q*`, `HIGH_PRECISION_CLKDIV`.
+
+### `bench.h`
+
+SysTick hot-path profiler: probe table, cross-core snapshot, paced USB report. See [`BENCHMARKING.md`](BENCHMARKING.md).
+
+**Functions**
+- `bench_init_core()` — Arm this core's SysTick; calibrate probe overhead.
+  - **Called from:** `setup()`, `setup1()`.
+- `bench_poll_core0()` — Periodic ~1 Hz dump request, format report, pace Serial TX.
+  - **Called from:** `loop()`.
+- `bench_service()` — Snapshot and clear this core's probes on dump request.
+  - **Called from:** `bench_poll_core0()` (core 0); `loop1()` (core 1).
 
 ### `include_all.h`
 
@@ -166,9 +175,9 @@ Real-time voice engine (float/fixed), allocation, pitch tables, amp/PW helpers.
 - `initMultiplierTables()` — Build int/float pitch tables and slopes (uses `expInterpolationSolveY`).
   - **Called from:** `init_voices()`.
   - **When:** Boot Core1.
-- `print_voice_task_timings()` — Dump voice-task phase averages.
-  - **Called from:** `print_running_averages()`.
-  - **When:** Debug only (`RUNNING_AVERAGE`).
+- `print_clkdiv_bench()` — Append CLKDIV comparison to report (stub on DCO4).
+  - **Called from:** `bench_poll_core0()`.
+  - **When:** `CLKDIV_BENCHMARK` (not wired).
 
 ### `noteList.h`
 
@@ -660,7 +669,7 @@ Flags only. **No function definitions.**
 **Functions**
 - `millisTimer()` — Update soft timer flags (99 µs, ~1 ms, 200 ms, 1000 ms, …).
   - **Called from:** `loop1()` every iteration.
-  - **When:** Realtime Core1. (`timer99microsFlag` used in voice PW update; `timer1000msFlag` for `RUNNING_AVERAGE`.)
+  - **When:** Realtime Core1. (`timer99microsFlag` used in voice PW update.)
 
 ### `utils.h`
 

@@ -25,7 +25,8 @@ Related docs:
     - See [`ENGINE_OPTIONS.md`](ENGINE_OPTIONS.md) for precision vs speed trade-offs.
   - Configures USB product strings in `setup()` (via Adafruit TinyUSB), toggles board pins (23/24) for hardware fixes, and selects DCO calibration mode.
   - Core‑0 pushes `DETUNE_INTERNAL_q24` (LFO1 detune) through `rp2040.fifo`; core‑1 pops it and uses it inside the voice task (float path converts Q24 → float each frame).
-  - `loop1()` calls `voice_task_main()` (dispatch to float or fixed). Optionally prints detailed timing statistics when `RUNNING_AVERAGE` is enabled.
+  - `loop1()` calls `voice_task_main()` (dispatch to float or fixed), then `bench_service(1)` to hand profiler counters to core 0.
+  - **Profiling** (`RUNNING_AVERAGE`, optionally `RUNNING_AVERAGE_FINE`): both loops bracketed by `BENCH_*` probes from [`bench.h`](../bench.h); core 0 prints via `bench_poll_core0()` at ~1 Hz by default. See [`BENCHMARKING.md`](BENCHMARKING.md).
 
 - **`include_all.h`**  
   - Convenience umbrella header used by most `.ino` implementation files.  
@@ -46,12 +47,11 @@ Related docs:
 ## 2. Voice Architecture & Real-Time Engine
 
 - **`voices.h`**  
-  - Declares `init_voices()`, `print_voice_task_timings()` and core voice‑engine globals:
+  - Declares `init_voices()` and core voice‑engine globals:
     - Portamento configuration and mode (`PORTA_MODE_TIME` / `PORTA_MODE_SLEW`).
     - Per‑DCO portamento state in **Q24 Hz** (`portamento_*_q24`) and in **Q16 semitone space** for slew‑rate mode.
     - When `USE_FLOAT_VOICE_TASK`: parallel float portamento state (`porta_*_f`) in Hz and semitone domains.
     - Precomputed pitch multiplier table storage (`xMultiplierTable`, `yMultiplierTable`, float mirrors `xMultiplierTableF` / `yMultiplierTableF`, `slopeQ*` / `slopeF`, `interpSegCache`).
-    - RunningAverage externs (when enabled) for fine‑grained performance profiling.
 
 - **`voices.ino`**  
   - Central **voice engine** and DCO front‑end with a **compile-time dual implementation**:
@@ -98,8 +98,7 @@ Related docs:
       - `get_PW_level_interpolated()` – maps PW counts into calibrated limits and center values (shared by both engines).
     - Calibration front‑end:
       - `voice_task_autotune()` – dedicated per‑oscillator routine used during DCO/DCO+PW calibration to drive the PIO and PWM into specific measurement or calibration modes (float-style clkdiv + `get_chan_level_for_engine`).
-    - Timing diagnostics:
-      - `print_voice_task_timings()` – prints detailed microsecond averages for each phase of the voice task when `RUNNING_AVERAGE` is active.
+    - Timing diagnostics: `BENCH_*` probes in `voice_task()` / `voice_task_float()`; report formatting in [`bench.h`](../bench.h). See [`BENCHMARKING.md`](BENCHMARKING.md).
 
 ---
 
@@ -318,7 +317,7 @@ Related docs:
     - Resets and updates flag variables (`timer99microsFlag`, `timer200msFlag`, `timer1000msFlag`, etc.) used by:
       - `loop1()` (core 1) to rate‑limit ADSR updates.
       - The voice task to schedule PW updates.
-      - `print_running_averages()` for periodic diagnostic prints.
+      - `bench_poll_core0()` for ~1 Hz profiler dumps (when `RUNNING_AVERAGE` is on).
 
 - **`utils.h` / `utils.ino`**  
   - Small helper utilities:

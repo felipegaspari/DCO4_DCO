@@ -3,7 +3,6 @@
 #define __VOICES_H__
 
 void init_voices();
-void print_voice_task_timings();
 
 volatile bool note_on_flag_flag[NUM_VOICES_TOTAL];
 
@@ -87,26 +86,5 @@ static const uint16_t maxFrequency = 4000;
 static constexpr int32_t Q24_ONE = (1 << 24);
 static constexpr int32_t Q24_EPS_DELTA_1P00001 = 168; // round(0.00001 * 2^24)
 static constexpr int32_t Q24_ONE_EPS = Q24_ONE + Q24_EPS_DELTA_1P00001;
-
-
-#ifdef RUNNING_AVERAGE
-// RunningAverage objects for timing measurements (2000 samples each)
-extern RunningAverage ra_pitchbend;
-extern RunningAverage ra_osc2_detune;
-extern RunningAverage ra_portamento;
-extern RunningAverage ra_porta_core;
-extern RunningAverage ra_adsr_modifier;
-extern RunningAverage ra_unison_modifier;
-extern RunningAverage ra_drift_modifier;
-extern RunningAverage ra_modifiers_combination;
-extern RunningAverage ra_freq_scaling_x;
-extern RunningAverage ra_freq_scaling_ratio;
-extern RunningAverage ra_freq_scaling_post;
-extern RunningAverage ra_interpolate_pitch;
-extern RunningAverage ra_get_chan_level;
-extern RunningAverage ra_pwm_calculations;
-extern RunningAverage ra_voice_task_total;
-extern RunningAverage ra_clk_div_calc;
-#endif
 
 #endif

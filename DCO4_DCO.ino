@@ -8,12 +8,16 @@
 - Ask the AI to optimize and clean the autotune code. 
 */
 
-// #define RUNNING_AVERAGE
-
-#ifdef RUNNING_AVERAGE
-#include "RunningAverage.h"
-// Note: RunningAverage objects for voice_task timing are defined in voices.ino
-#endif
+// ---------------------------------------------------------------------------
+// Profiling (see docs/BENCHMARKING.md)
+// ---------------------------------------------------------------------------
+// RUNNING_AVERAGE enables the hot-path profiler in bench.h: per-probe count / mean / min /
+// max / total plus each probe's share of its core's wall clock. Off means zero cost.
+// RUNNING_AVERAGE_FINE additionally instruments the smallest stages (a few multiplies
+// each). Every probe is an optimisation barrier, so enabling FINE changes codegen — it is
+// there to measure that distortion, not to be left on.
+#define RUNNING_AVERAGE
+// #define RUNNING_AVERAGE_FINE
 
 // ---------------------------------------------------------------------------
 // Voice engine build options
@@ -80,6 +84,7 @@
 #include "param_router.h"
 
 #include "globals.h"
+#include "bench.h"
 
 #include "FS.h"
 
@@ -102,21 +107,13 @@
 
 // #include "irq_tuner.h"
 
-#ifdef RUNNING_AVERAGE
-RunningAverage ra_loop1_ADSR_and_detune(2000);
-RunningAverage ra_loop0_LFOs(2000);
-RunningAverage ra_loop0_DRIFT_LFOs(2000);
-RunningAverage ra_loop0_MIDI_and_serial(2000);
-RunningAverage ra_loop0_memcpy(2000);
-
-#endif
-
 // ****************************************************************************************** //
 
 // Core 0 boot: serial, MIDI, LFOs, board fix pins, USB descriptors, calibration input pin.
 void setup() {
   //set_sys_clock_khz(sysClock, true);
   // EEPROM.begin(512);
+  bench_init_core();  // SysTick is per core; core 1 arms its own in setup1()
   init_serial();
   init_midi();
 
@@ -149,6 +146,8 @@ void setup1() {
 
   //set_sys_clock_khz(sysClock, true);
 
+  bench_init_core();
+
   init_PID();
 
   init_FS();
@@ -174,59 +173,55 @@ void setup1() {
 
 // Core 0 forever loop: MIDI read, Serial2 parser, LFO1; ~100 µs LFO2 + drift + FIFO push of detune.
 void loop() {
-  // unsigned long loop0_start_time = micros();
-  // unsigned long loop0_total_time;
+  BENCH_PERIOD(loop0_period);
   loop0_micros = micros();
 
-  MIDI_USB.read();
-  MIDI_SERIAL.read();
-  serial_STM32_task();
-
-  LFO1();
-
-#ifdef RUNNING_AVERAGE
-ra_loop0_MIDI_and_serial.addValue((float)(micros() - loop0_micros));
-#endif
+  {
+    BENCH_BEGIN(loop0_io);
+    MIDI_USB.read();
+    MIDI_SERIAL.read();
+    serial_STM32_task();
+    LFO1();
+    BENCH_END(loop0_io);
+  }
 
   if ((loop0_micros - loop0_microsLast) > 100) {
-#ifdef RUNNING_AVERAGE
-    unsigned long t_loop0_LFOs = micros();
-#endif
+    {
+      BENCH_BEGIN(loop0_lfo2);
+      LFO2();
+      BENCH_END(loop0_lfo2);
+    }
 
-    LFO2();
+    {
+      BENCH_BEGIN(loop0_drift);
+      DRIFT_LFOs();
+      BENCH_END(loop0_drift);
+    }
 
-    #ifdef RUNNING_AVERAGE
-    ra_loop0_LFOs.addValue((float)(micros() - t_loop0_LFOs));
-    unsigned long t_loop0_DRIFT_LFOs = micros();
-#endif
-
-    DRIFT_LFOs();
-    #ifdef RUNNING_AVERAGE
-    ra_loop0_DRIFT_LFOs.addValue((float)(micros() - t_loop0_DRIFT_LFOs));
-    unsigned long t_loop0_memcpy = micros();
-#endif
-
-    // Transfer LFO1 detune modulation as a raw Q24 fixed-point integer via FIFO.
-    rp2040.fifo.push_nb((uint32_t)DETUNE_INTERNAL_q24);
-
-#ifdef RUNNING_AVERAGE
-    ra_loop0_memcpy.addValue((float)(micros() - t_loop0_memcpy));
-#endif
+    {
+      // Transfer LFO1 detune modulation as a raw Q24 fixed-point integer via FIFO.
+      BENCH_BEGIN(loop0_fifo_push);
+      rp2040.fifo.push_nb((uint32_t)DETUNE_INTERNAL_q24);
+      BENCH_END(loop0_fifo_push);
+    }
 
     loop0_microsLast = loop0_micros;
-    // Serial.println((String)"a" + (micros() - a));
   }
-  // loop0_total_time = micros() - loop0_start_time;
-  // if (loop0_total_time > 10) {
-  //// Serial.println(loop0_total_time);
-  // }
+
+  // Snapshot core 0's probes and print once core 1 has handed its own over. All profiler
+  // serial traffic happens here, never on the audio core.
+  bench_poll_core0();
 }
 
 // Core 1 forever loop: soft timers; auto/manual calibration OR ADSR + FIFO pop + voice_task_main.
 void loop1() {
-  // unsigned long loop1_start_time = micros();
-  // unsigned long loop1_total_time;
-  millisTimer();
+  BENCH_PERIOD(loop1_period);
+
+  {
+    BENCH_BEGIN(loop1_millis);
+    millisTimer();
+    BENCH_END(loop1_millis);
+  }
 
   if (calibrationFlag == true) {
     if (manualCalibrationFlag == true) {
@@ -247,60 +242,29 @@ void loop1() {
     loop1_micros = micros();
 
     if ((loop1_micros - loop1_microsLast) > 100) {
-#ifdef RUNNING_AVERAGE
-      unsigned long t_loop1_ADSR_and_detune = micros();
-#endif
-      ADSR_update();
-
-#ifdef RUNNING_AVERAGE
-      ra_loop1_ADSR_and_detune.addValue((float)(micros() - t_loop1_ADSR_and_detune));
-#endif
+      {
+        BENCH_BEGIN(loop1_adsr);
+        ADSR_update();
+        BENCH_END(loop1_adsr);
+      }
       loop1_microsLast = loop1_micros;
     }
-    
-          // Receive Q24 detune value from core 0; reinterpret raw bits back to signed.
-          rp2040.fifo.pop_nb(detune_fifo_variable);
-          DETUNE_INTERNAL_FIFO_q24 = (int32_t)DETUNE_INTERNAL_FIFO;
 
-    // loop speed
-    //  loop1_start_time = micros();
-    // Serial.println("pre voice task");
-    voice_task_main();
-    //voice_task_gold_reference();
-    //voice_task_simple();
-    //voice_task_debug();
-    // Serial.println("post voice task");
-    // loop speed
-    // loop1_total_time = micros() - loop1_start_time;
-    //  if (loop1_total_time > 50) {
-    // Serial.println(loop1_total_time);
-    //  }
-    // Serial.println("loop1");
+    {
+      // Receive Q24 detune value from core 0; reinterpret raw bits back to signed.
+      BENCH_BEGIN(loop1_fifo_pop);
+      rp2040.fifo.pop_nb(detune_fifo_variable);
+      DETUNE_INTERNAL_FIFO_q24 = (int32_t)DETUNE_INTERNAL_FIFO;
+      BENCH_END(loop1_fifo_pop);
+    }
+
+    {
+      BENCH_BEGIN(voice_task);
+      voice_task_main();
+      BENCH_END(voice_task);
+    }
   }
 
-  #ifdef RUNNING_AVERAGE
-  if (timer1000msFlag) {
-    print_running_averages();
-  }
-  #endif
+  // Hand this core's counters to core 0, which does all the printing.
+  bench_service(1);
 }
-
-#ifdef RUNNING_AVERAGE
-// Debug: print Core0/Core1 timing averages (~1 Hz when timer1000msFlag). Calls print_voice_task_timings().
-void print_running_averages() {
-  Serial.println("--------------------------------");
-  Serial.println("RUNNING AVERAGES");
-  Serial.println("--------------------------------");
-  Serial.println("Loop0");
-  Serial.println((String) "Loop0 MIDI and Serial: " + ra_loop0_MIDI_and_serial.getFastAverage());
-  Serial.println((String) "Loop0 LFOs: " + ra_loop0_LFOs.getFastAverage());
-  Serial.println((String) "Loop0 DRIFT LFOs: " + ra_loop0_DRIFT_LFOs.getFastAverage());
-  Serial.println((String) "Loop0 memcpy: " + ra_loop0_memcpy.getFastAverage());
-  Serial.println("Loop1");
-  Serial.println((String) "Loop1 ADSR and Detune: " + ra_loop1_ADSR_and_detune.getFastAverage());
-
-
-
-  print_voice_task_timings();
-}
-#endif

@@ -74,7 +74,7 @@ Related (not engine math, but often used together):
 
 | Define | Default | Role |
 |--------|---------|------|
-| `RUNNING_AVERAGE` | off | Per-phase µs profilers in voice task / loops |
+| `RUNNING_AVERAGE` | **on** | Hot-path profiler in [`bench.h`](../bench.h) — see [`BENCHMARKING.md`](BENCHMARKING.md) |
 | `DCO_DEBUG_REPORT` | `0` in `voices.ino` | Serial dump of OSC1 frequency stages |
 | `ENABLE_FS_CALIBRATION` | on in `globals.h` | Load LittleFS voiceTables / PW cal into amp-comp arrays |
 | `CLKDIV_BENCHMARK` | off | **Incomplete** — do not rely on it (see §10) |
@@ -218,7 +218,7 @@ System clock used by clkdiv: `sysClock = 225000` kHz → `sysClock_Hz = 225e6` (
 2. Full rebuild (both cores / clean if IDE caches oddly).
 3. Confirm `ENABLE_FS_CALIBRATION` load path matches amp-comp mode (no assert / empty tables).
 4. Play low and high notes; check for zippering, beating, or amp dropouts at plateau.
-5. Optional: enable `RUNNING_AVERAGE` and read `print_voice_task_timings()` to compare µs budgets after a flag change.
+5. Optional: with `RUNNING_AVERAGE` on (default), read the `DCO4 BENCH` USB dump and compare `%win` budgets after a flag change ([`BENCHMARKING.md`](BENCHMARKING.md)).
 
 ---
 
